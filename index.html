@@ -106,12 +106,14 @@
     let isActive = false;
     let restartTimer = null;
     let configTimeout = null;
+    let watchDogTimer = null; // バックグラウンド生存確認用
     
-    // パフォーマンス・文字落ち対策用バッファ
-    let finalParagraphs = []; // 確定テキストの配列（DOM負荷軽減）
+    // パフォーマンス・重複・文字落ち対策用バッファ
+    let finalParagraphs = []; 
     let confirmedSet = new Set();
     let processedIndices = new Set();
     let lastConfirmedText = "";
+    let lastEventTime = Date.now();
 
     function updateStatus(type, msg) {
         statusDisp.innerText = msg;
@@ -151,7 +153,7 @@
         } catch (e) {}
     }
 
-    // 文字列の前方一致する長さを探す（Android雪だるま現象の強化対策用）
+    // Android雪だるま重複を厳密に切り落とす前方一致判定
     function getOverlapLength(str1, str2) {
         const minLen = Math.min(str1.length, str2.length);
         let overlap = 0;
@@ -172,7 +174,7 @@
             return;
         }
 
-        // 明示的にマイクストリームを取得してデバイス変更と最適化を適用
+        // マイクストリームの明示的確保（デバイス変更＆ネイティブ最適化）
         try {
             if (currentStream) {
                 currentStream.getTracks().forEach(t => t.stop());
@@ -189,7 +191,7 @@
             }
             currentStream = await navigator.mediaDevices.getUserMedia(constraints);
         } catch (err) {
-            console.error("マイクアクセス失敗:", err);
+            console.error("Stream確保失敗（認識処理は続行）:", err);
         }
 
         recognition = new SpeechRecognition();
@@ -199,9 +201,12 @@
 
         recognition.onstart = () => {
             updateStatus('online', "認識中：声をしっかり拾っています。");
+            lastEventTime = Date.now();
+            startWatchdog();
         };
 
         recognition.onresult = (e) => {
+            lastEventTime = Date.now();
             let interimText = '';
             let hasNewFinal = false;
 
@@ -218,12 +223,11 @@
 
                     if (confirmedSet.has(cleanText)) continue;
 
-                    // 強化版：直前確定テキストとの重複部分を柔軟にカット
+                    // Android特有の過去確定文巻き込み（重複）を高度にカット
                     if (lastConfirmedText) {
                         const cleanLast = lastConfirmedText.replace(/[\s。、]/g, "");
                         const overlap = getOverlapLength(cleanLast, cleanText);
                         if (overlap > 0) {
-                            // 重複部分の文字数分、生のtranscriptから削る近似処理
                             let rawOverlap = 0;
                             let cleanIdx = 0;
                             for(let j = 0; j < transcript.length; j++) {
@@ -244,28 +248,26 @@
                     if (transcript === "") continue;
 
                     confirmedSet.add(cleanText);
-                    lastConfirmedText = result[0].transcript.trim(); // 元の全体を記憶
+                    lastConfirmedText = result[0].transcript.trim(); 
 
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
                     
                     finalParagraphs.push(transcript);
                     hasNewFinal = true;
                 } else {
-                    // 未確定時も重複バッファにあるものは表示しない
                     if (!processedIndices.has(i) && !confirmedSet.has(cleanText)) {
                         interimText += transcript;
                     }
                 }
             }
 
-            // DOM更新をバッチ化してパフォーマンスを最速化
+            // 高速レンダリング（DOMバッチ処理）
             if (hasNewFinal) {
                 finalSpan.textContent = finalParagraphs.join("\n");
                 interimSpan.textContent = '';
                 outputBox.scrollTop = outputBox.scrollHeight;
             } else {
                 interimSpan.textContent = interimText;
-                // 未確定が増えた時もスクロールを追従
                 if (interimText) {
                     outputBox.scrollTop = outputBox.scrollHeight;
                 }
@@ -274,8 +276,8 @@
 
         recognition.onend = () => {
             recognition = null;
-            // メモリ解放：セッションが切れたらインデックスバッファをリセット
             processedIndices.clear(); 
+            stopWatchdog();
             
             if (isActive) {
                 updateStatus('connecting', "無音による一時切断。2秒後に安全に自動復帰します...");
@@ -291,9 +293,7 @@
                 updateStatus('error', "マイク権限がありません。");
                 stopSpeechEngine();
             } else if (ev.error === 'network') {
-                console.log("ネットワーク一時エラー。自動復帰を試みます。");
-            } else {
-                console.log("SpeechRecognition error:", ev.error);
+                lastEventTime = Date.now(); // ネットワーク遮断時も復帰を促す
             }
         };
 
@@ -304,9 +304,31 @@
         }
     }
 
+    // Androidのバックグラウンドサイレント死を検知・即復帰させるウォッチドッグ
+    function startWatchdog() {
+        stopWatchdog();
+        watchDogTimer = setInterval(() => {
+            // 25秒間完全にイベントが無反応な場合、Android側でエンジンがハングしているとみなし強制再起動
+            if (isActive && (Date.now() - lastEventTime > 25000)) {
+                lastEventTime = Date.now();
+                if (recognition) {
+                    try { recognition.stop(); } catch(e){}
+                }
+            }
+        }, 10000);
+    }
+
+    function stopWatchdog() {
+        if (watchDogTimer) {
+            clearInterval(watchDogTimer);
+            watchDogTimer = null;
+        }
+    }
+
     function stopSpeechEngine() {
         isActive = false; 
         clearTimeout(restartTimer);
+        stopWatchdog();
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
@@ -340,11 +362,18 @@
         }, 500);
     }
 
+    // アプリがバックグラウンドから復帰した際に認識を安全に再同期
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && isActive && !recognition) {
+            lastEventTime = Date.now();
+            startSpeechEngine();
+        }
+    });
+
     startBtn.onclick = () => {
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        // 開始時は安全のため全バッファをクリア
         confirmedSet.clear();
         processedIndices.clear();
         lastConfirmedText = "";
