@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（全履歴総当たりガード・多重表示完全封印版）</title>
+    <title>逐語録（PCフリーズ対策・超軽量版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -34,7 +34,7 @@
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
         .log-area { flex-grow: 1; height: 600px; padding: 15px; border-radius: 12px; border: 1px solid #ddd; background: #222; color: #00ff00; font-family: 'Courier New', Courier, monospace; font-size: 12px; overflow-y: auto; box-sizing: border-box; }
-        .log-entry { margin-bottom: 5px; border-left: 2px solid #444; padding-left: 8px; }
+        .log-entry { margin-bottom: 6px; line-height: 1.4; border-left: 3px solid #00ff00; padding-left: 8px; white-space: pre-wrap; word-break: break-all; }
         .log-time { color: #888; margin-right: 5px; }
 
         .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
@@ -50,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（全履歴総当たりガード・多重表示完全封印版）</h2>
+            <h2>逐語録（PCフリーズ対策・超軽量版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -95,7 +95,7 @@
     </div>
     <div class="log-panel">
         <div class="card" style="height: 100%;">
-            <h2>認識中ログ</h2>
+            <h2>確定テキストログ</h2>
             <div id="log-area" class="log-area"></div>
         </div>
     </div>
@@ -120,27 +120,39 @@
 
     let recognition = null;
     let isActive = false;
+    let configTimeout = null;
     
-    // 【ダブり絶対阻止のコアデータベース】
-    // 過去に確定出力した文字列をすべて配列に永久ストックする
-    let globalConfirmedHistory = [];
+    // 重複を最速で弾くための軽量Setオブジェクト
+    let confirmedSet = new Set();
     let processedIndices = new Set();
+    let lastConfirmedText = "";
 
-    function addLog(text, isFinal) {
+    function addConfirmedLog(text) {
         const entry = document.createElement('div');
         entry.className = 'log-entry';
-        const timeStr = new Date().toLocaleTimeString();
-        entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${isFinal ? '<b>[確定]</b> ' : ''}${text}</span>`;
+        
+        const timeSpan = document.createElement('span');
+        timeSpan.className = 'log-time';
+        timeSpan.textContent = `[${new Date().toLocaleTimeString()}] `;
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `[確定] ${text}`;
+        
+        entry.appendChild(timeSpan);
+        entry.appendChild(textSpan);
         logArea.appendChild(entry);
+        
         logArea.scrollTop = logArea.scrollHeight;
-        if (logArea.childNodes.length > 40) logArea.removeChild(logArea.firstChild);
+        if (logArea.childNodes.length > 30) {
+            logArea.removeChild(logArea.firstChild);
+        }
     }
 
     function updateStatus(type, msg) {
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：常時接続中（重複超厳戒監視）"; 
+            connText.innerText = "音声認識：常時接続中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
             connText.innerText = "音声認識：停止中"; 
@@ -168,7 +180,7 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {}
     }
 
     function startSpeechEngine() {
@@ -183,7 +195,7 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true; // 【フリーズ撲滅】ブラウザ本来のネイティブ常時接続
+        recognition.continuous = true; 
 
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
@@ -191,7 +203,7 @@
         }
 
         recognition.onstart = () => {
-            updateStatus('online', "マイク常時接続中：お話しください。");
+            updateStatus('online', "システム稼働中：お話しください。");
         };
 
         recognition.onresult = (e) => {
@@ -201,42 +213,25 @@
                 let result = e.results[i];
                 let transcript = result[0].transcript.trim();
 
-                // フィラー（えー、あの）をリアルタイム自動消去
                 const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                 transcript = transcript.replace(fillerRegex, "").trim();
 
                 if (transcript === "") continue;
 
                 if (result.isFinal) {
-                    // 同一イベントインデックスの重複は即死ガード
                     if (processedIndices.has(i)) continue;
 
-                    // 【究極のダブり総当たりスキャナー】
-                    // 新しく来た確定文字列が、過去の全履歴配列の「いずれかと完全一致」、
-                    // あるいは過去の文の中に「丸ごと含まれている（雪だるまの部分再送バグ）」なら絶対に弾く
-                    let isDuplicate = false;
-                    const cleanTranscript = transcript.replace(/[\s。、]/g, "");
-
-                    for (let hist of globalConfirmedHistory) {
-                        const cleanHist = hist.replace(/[\s。、]/g, "");
-                        // 過去の言葉と完全に同じ、または過去の長い文のパーツ（切り取り）であればダブりと断定
-                        if (cleanTranscript === cleanHist || cleanHist.includes(cleanTranscript)) {
-                            isDuplicate = true;
-                            break;
-                        }
-                    }
-
-                    if (isDuplicate) {
-                        processedIndices.add(i); // 重複として処理済みにマークしてスルー
+                    const cleanText = transcript.replace(/[\s。、]/g, "");
+                    
+                    // 超軽量Setによる重複高速ブロック（CPU負荷を最小化）
+                    if (confirmedSet.has(cleanText)) {
+                        processedIndices.add(i);
                         continue;
                     }
 
-                    // 過去の最新履歴をこの新しい文字が「拡張（内包）」している場合、その差分だけを切り出す
-                    if (globalConfirmedHistory.length > 0) {
-                        const lastHist = globalConfirmedHistory[globalConfirmedHistory.length - 1];
-                        if (transcript.startsWith(lastHist) && transcript !== lastHist) {
-                            transcript = transcript.substring(lastHist.length).trim();
-                        }
+                    // 雪だるま式再送の差分吸収
+                    if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
+                        transcript = transcript.substring(lastConfirmedText.length).trim();
                     }
 
                     if (transcript === "") {
@@ -244,45 +239,35 @@
                         continue;
                     }
 
-                    // 完璧に審査を通った「完全な新しい一言」のみを、履歴と画面に書き込む
-                    globalConfirmedHistory.push(transcript);
+                    // 履歴に登録
+                    confirmedSet.add(cleanText);
                     processedIndices.add(i);
+                    lastConfirmedText = transcript;
 
+                    // 画面反映
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
 
                     finalSpan.innerText += separator + transcript;
-                    addLog(transcript, true);
+                    addConfirmedLog(transcript);
                     interimText = '';
                 } else {
-                    // 未確定（プレビュー）も、すでに過去の確定履歴に存在する文字列なら画面に出さない
-                    let isInterimDup = false;
                     const cleanInterim = transcript.replace(/[\s。、]/g, "");
-                    for (let hist of globalConfirmedHistory) {
-                        if (hist.replace(/[\s。、]/g, "").includes(cleanInterim)) {
-                            isInterimDup = true;
-                            break;
-                        }
-                    }
-                    if (!processedIndices.has(i) && !isInterimDup) {
+                    if (!processedIndices.has(i) && !confirmedSet.has(cleanInterim)) {
                         interimText += transcript;
                     }
                 }
             }
 
             interimSpan.innerText = interimText;
-            if (interimText.trim() !== "") {
-                addLog(interimText, false);
-            }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
 
         recognition.onend = () => {
             recognition = null;
-            // 意図しない切断（無音時間切れなど）のみ高速自動復帰
             if (isActive) {
-                setTimeout(() => { if (isActive) startSpeechEngine(); }, 100);
+                setTimeout(() => { if (isActive) startSpeechEngine(); }, 200);
             }
         };
 
@@ -306,18 +291,41 @@
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
         if (recognition) {
-            try { recognition.stop(); } catch(e){}
+            try {
+                recognition.onstart = null;
+                recognition.onresult = null;
+                recognition.onend = null;
+                recognition.onerror = null;
+                recognition.stop();
+            } catch(e){}
             recognition = null;
         }
         interimSpan.innerText = "";
+    }
+
+    // 設定変更時の多重起動を絶対に防ぐ安全ウェイトリレー
+    function handleConfigChange() {
+        if (!isActive) return;
+        
+        // 1回完全にエンジンを消滅させる
+        if (recognition) {
+            try { recognition.stop(); } catch(e){}
+            recognition = null;
+        }
+        
+        clearTimeout(configTimeout);
+        configTimeout = setTimeout(() => {
+            if (isActive) startSpeechEngine();
+        }, 300); // 300msの間を空けて安全に再起動
     }
 
     startBtn.onclick = () => {
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        globalConfirmedHistory = []; // 新規開始時にデータベースを完全クリア
+        confirmedSet.clear();
         processedIndices.clear();
+        lastConfirmedText = "";
         updateStatus('connecting', "マイクを初期化中...");
         startSpeechEngine();
     };
@@ -326,16 +334,9 @@
         stopSpeechEngine();
     };
 
-    // 設定変更（不要なログの出力は一切ありません）
-    micSelect.onchange = () => {
-        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
-    };
-    gainSelect.onchange = () => {
-        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
-    };
-    noiseToggle.onchange = () => {
-        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
-    };
+    micSelect.onchange = handleConfigChange;
+    gainSelect.onchange = handleConfigChange;
+    noiseToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
         const text = finalSpan.innerText;
@@ -369,8 +370,9 @@
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-            globalConfirmedHistory = [];
+            confirmedSet.clear();
             processedIndices.clear();
+            lastConfirmedText = "";
         }
     };
 
