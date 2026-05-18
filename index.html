@@ -123,6 +123,7 @@
     let stream = null;
     let restartTimeoutId = null;
     
+    // Android環境の厳密な判定
     const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
@@ -150,7 +151,12 @@
         }
     }
 
+    // デバイス一覧取得（PC環境専用。Androidでは競合フリーズを起こすため絶対実行しない）
     async function refreshDevices() {
+        if (isAndroid) {
+            micSelect.innerHTML = '<option value="">-- Androidは既定のマイクで動作中 --</option>';
+            return;
+        }
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -178,13 +184,12 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // Androidは多重増殖を殺すためfalse、PCは連続モードを維持
+        // Androidはフリーズと文字増殖を完全に回避するためfalse（単発）、PCは連続モード
         recognition.continuous = !isAndroid;
 
         recognition.onstart = async () => {
             updateStatus('online', "認識中：お話しください。");
-            // 音声入力開通後に安全にデバイス名を取得
-            await refreshDevices();
+            if (!isAndroid) await refreshDevices();
         };
         
         recognition.onresult = (e) => {
@@ -223,6 +228,7 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
+                // Androidは単発モードのため、一言ごとにここを通る。最速で再起動をかけ文字落ちを防止（0ms）
                 const delay = isAndroid ? 0 : 150;
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
@@ -256,20 +262,25 @@
     }
 
     async function startStream() {
-        // 【修正・絶対開通】全環境で確実にマイク入力をブラウザに通す
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? deviceId : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
+        // 【最重要修正】Androidの場合は、マイクを殺すgetUserMediaを一切実行せず、音声認識だけを即起動する
+        if (!isAndroid) {
+            const deviceId = micSelect.value;
+            const constraints = {
+                audio: {
+                    deviceId: deviceId ? deviceId : undefined,
+                    echoCancellation: true,
+                    noiseSuppression: noiseToggle.checked,
+                    autoGainControl: true
+                }
+            };
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+            } catch (e) { 
+                console.warn("PCマイク取得警告:", e); 
             }
-        };
-        try {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) { 
-            console.warn("マイクデバイス取得警告:", e); 
+        } else {
+            // Android用の表示リセット
+            micSelect.innerHTML = '<option value="">-- Androidは既定のマイクで動作中 --</option>';
         }
 
         const rec = setupRecognition();
@@ -300,7 +311,7 @@
     };
 
     gainSelect.onchange = () => {
-        // ログ出力なし
+        // 処理なし
     };
 
     copyBtn.onclick = async () => {
@@ -340,7 +351,7 @@
     };
 
     micSelect.onchange = async () => {
-        if (isActive) {
+        if (isActive && !isAndroid) {
             updateStatus('connecting', "マイク切替中...");
             await stopMedia();
             isActive = true;
@@ -349,7 +360,7 @@
     };
 
     noiseToggle.onchange = async () => {
-        if (isActive) {
+        if (isActive && !isAndroid) {
             updateStatus('connecting', "設定変更中...");
             await stopMedia();
             isActive = true;
@@ -364,8 +375,10 @@
     };
 
     window.onload = async () => {
-        // 初回ロード時は、PCのみ安全にデバイス一覧の初期スキャンを行う
-        if (!isAndroid) {
+        // 初期状態のセット
+        if (isAndroid) {
+            micSelect.innerHTML = '<option value="">-- 認識開始後に自動接続されます --</option>';
+        } else {
             try {
                 const streamPlaceholder = await navigator.mediaDevices.getUserMedia({ audio: true });
                 await refreshDevices();
