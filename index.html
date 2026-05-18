@@ -122,9 +122,9 @@
     let isActive = false;
     let stream = null;
     let restartTimeoutId = null;
-
-    // Androidの多重ループ・ダブり書き込みを制御するための「最後に処理した確定文のID」管理
-    let lastProcessedFinalIndex = -1;
+    
+    // Android環境判定フラグ
+    const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -180,43 +180,66 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        recognition.onstart = () => {
-            updateStatus('online', "認識中：お話しください。");
-            lastProcessedFinalIndex = -1; // 起動時にインデックスを初期化
-        };
+        recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
         
         recognition.onresult = (e) => {
             let interimText = '';
             
-            // ループ処理を厳格化：Androidの5重ダブりを防ぐため、確定と暫定を完全に分離
-            for (let i = e.resultIndex; i < e.results.length; i++) {
-                let result = e.results[i];
-                let transcript = result[0].transcript;
+            // PCとAndroidで処理ロジックを完全に分離（ハイブリッド処理）
+            if (!isAndroid) {
+                // 【PC（デスクトップ）用超高速・低遅延ロジック】
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    let result = e.results[i];
+                    if (result.isFinal) {
+                        let cleanedText = result[0].transcript.trim();
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                        
+                        if (cleanedText === "") continue;
 
-                if (result.isFinal) {
-                    // 【最重要】すでに処理した確定インデックス（発言ID）なら、絶対に重複処理をしない（Android5重ダブり対策）
-                    if (i <= lastProcessedFinalIndex) continue;
-                    lastProcessedFinalIndex = i;
+                        const currentFinal = finalSpan.innerText.trim();
+                        const hasPunct = /[。？！?!]$/.test(currentFinal);
+                        let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    let cleanedText = transcript.trim();
-                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                    cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-                    
-                    if (cleanedText === "") continue;
+                        finalSpan.innerText += separator + cleanedText;
+                        addLog(cleanedText, true);
+                    } else {
+                        interimText += result[0].transcript;
+                    }
+                }
+            } else {
+                // 【Android専用：爆速応答＆ストリーム完全同期ロジック】
+                for (let i = 0; i < e.results.length; i++) {
+                    let result = e.results[i];
+                    if (result.isFinal) {
+                        // 確定データが新規に来た場合のみ処理
+                        if (i >= e.resultIndex) {
+                            let cleanedText = result[0].transcript.trim();
+                            if (cleanedText === "") continue;
 
-                    const currentFinal = finalSpan.innerText.trim();
-                    const hasPunct = /[。？！?!]$/.test(currentFinal);
-                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
-                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+                            const currentFinal = finalSpan.innerText.trim();
+                            const hasPunct = /[。？！?!]$/.test(currentFinal);
+                            let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                            if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true);
-                } else {
-                    interimText += transcript;
+                            finalSpan.innerText += separator + cleanedText;
+                            addLog(cleanedText, true);
+                            // 確定したら即座にインデックスを消費させて遅延を防ぐ
+                            e.resultIndex = i + 1;
+                        }
+                    } else {
+                        // Android特有の入れ子配列表記から、現在話しているリアルタイムな生ストリームを正確に抽出
+                        if (result[0] && result[0].transcript) {
+                            interimText = result[0].transcript;
+                        }
+                    }
                 }
             }
             
+            // リアルタイムに認識中ストリーム（グレー文字）を表示
             interimSpan.innerText = interimText;
+            
             if (interimText.trim() !== "") {
                 addLog(interimText, false);
             }
@@ -226,11 +249,12 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
+                // 復帰速度を最速(50ms)に高速化し、PCの次のストリーム読み込み遅延を完全消滅
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 200);
+                }, 50);
             } 
         };
         
@@ -258,44 +282,41 @@
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
-    async function startStream() {
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? deviceId : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
-            }
-        };
-
-        try {
-            // Androidのマイク権限ロックを安全に解除しつつデバイス一覧を取得
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-            await refreshDevices();
-            
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-        } catch (e) {
-            console.warn("マイク設定をスキップします", e);
-        }
-
+    function startStream() {
+        // 【爆速化の要】音声認識エンジンを最優先で、1ミリ秒の待ち時間もなく即時起動！
         const rec = setupRecognition();
         if (rec) rec.start();
+
+        // Android等のブロッキング（数秒フリーズ）を完全に防ぐため、マイクデバイスの初期化はバックグラウンドで完全非同期に実行！
+        setTimeout(async () => {
+            const deviceId = micSelect.value;
+            const constraints = {
+                audio: {
+                    deviceId: deviceId ? deviceId : undefined,
+                    echoCancellation: true,
+                    noiseSuppression: noiseToggle.checked,
+                    autoGainControl: true
+                }
+            };
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                await refreshDevices();
+            } catch (e) {
+                console.warn("バックグラウンドデバイス更新スキップ", e);
+            }
+        }, 300);
     }
 
-    startBtn.onclick = async () => {
+    startBtn.onclick = () => {
         try {
             startBtn.disabled = true;
             updateStatus('connecting', "初期化中...");
             isActive = true;
-            await startStream();
+            startStream(); // awaitを排除し、即時スタート
             stopBtn.disabled = false;
         } catch (e) {
             console.error(e);
-            updateStatus('error', "起動失敗。設定を確認してください。");
+            updateStatus('error', "起動失敗。");
             startBtn.disabled = false;
             isActive = false;
         }
@@ -354,7 +375,7 @@
             updateStatus('connecting', "デバイス切り替え...");
             await stopMedia();
             isActive = true;
-            await startStream();
+            startStream();
         }
     };
 
@@ -363,18 +384,22 @@
             updateStatus('connecting', "ノイズ設定反映中...");
             await stopMedia();
             isActive = true;
-            await startStream();
+            startStream();
         }
     };
 
     clearBtn.onclick = () => { 
         if (confirm("表示されているテキストを消去しますか？")) { 
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-            lastProcessedFinalIndex = -1;
         } 
     };
 
-    window.onload = refreshDevices;
+    // 初回起動時にデバイス権限をあらかじめバックグラウンドで呼んでおく
+    window.onload = async () => {
+        try {
+            await refreshDevices();
+        } catch(e){}
+    };
 </script>
 </body>
 </html>
