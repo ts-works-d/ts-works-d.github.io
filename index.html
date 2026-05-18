@@ -20,8 +20,7 @@
         @keyframes blink { 50% { opacity: 0.5; } }
         select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
-        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; margin-bottom: 10px; }
-        .setting-label:last-child { margin-bottom: 0; }
+        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
         #start { background: var(--primary); }
@@ -56,22 +55,11 @@
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            
             <select id="mic-select">
                 <option value="">-- [認識開始]後にマイクを選択できます --</option>
             </select>
-            
             <div class="setting-box">
                 <div class="setting-label">
-                    <span>感度調整（マイクブースト）</span>
-                    <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
-                        <option value="1.0">標準 (1.0倍)</option>
-                        <option value="1.5">少し上げる (1.5倍)</option>
-                        <option value="2.0" selected>大きく上げる (2.0倍)</option>
-                        <option value="3.0">最大限上げる (3.0倍)</option>
-                    </select>
-                </div>
-                <div class="setting-label" style="margin-top: 10px;">
                     <span>ノイズ軽減（要再起動）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle" checked>
@@ -79,7 +67,6 @@
                     </label>
                 </div>
             </div>
-            
             <div class="controls">
                 <button id="start">認識開始</button>
                 <button id="stop" disabled>停止</button>
@@ -101,7 +88,6 @@
 
 <script>
     const micSelect = document.getElementById('mic-select');
-    const gainSelect = document.getElementById('gain-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -120,12 +106,6 @@
     let isActive = false;
     let stream = null;
     let restartTimeoutId = null;
-
-    // 感度調整（AudioContext）用の変数群
-    let audioContext = null;
-    let mediaStreamSource = null;
-    let gainNode = null;
-    let mediaStreamDestination = null;
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -152,13 +132,15 @@
         }
     }
 
-    // Android Chrome特有の文字列重複バグを完全排除するロジック
+    // Android Chrome特有の同じ言葉が繰り返し追加されるバグを排除するロジック
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
+        // 比較のために余計な記号、空白、改行を除去
         const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
         const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
 
+        // すでに既存テキストに完全に含まれている場合は重複として処理しない
         if (cleanCurrent.includes(cleanNew)) {
             return "";
         }
@@ -166,6 +148,7 @@
         const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
         let overlapLength = 0;
 
+        // 末尾と先頭の文字レベルでの被り（最長共通接頭辞・接尾辞）をチェック
         for (let i = 1; i <= maxCheckLength; i++) {
             const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
             const newHead = cleanNew.substring(0, i);
@@ -174,6 +157,7 @@
             }
         }
 
+        // 被りがある場合、新しい文章の先頭から被り文字数分を物理的に削る
         if (overlapLength > 0) {
             let currentMatchLen = 0;
             let cutIndex = 0;
@@ -200,6 +184,7 @@
             const currentVal = micSelect.value;
             micSelect.innerHTML = '';
             
+            // 権限がない初期状態や、モバイルブラウザ向けの安全対策
             if (audioInputs.length === 0 || audioInputs[0].label === "") {
                 const opt = document.createElement('option');
                 opt.value = currentVal || "";
@@ -229,9 +214,7 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        recognition.onstart = () => {
-            if (isActive) updateStatus('online', "認識中：お話しください。");
-        };
+        recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
         
         recognition.onresult = (e) => {
             let interimText = '';
@@ -246,7 +229,7 @@
 
                     let currentFinal = finalSpan.innerText;
                     
-                    // 重複排除ロジックの適用
+                    // Android重複対策ロジックを実行
                     cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
                     if (cleanedText === "") continue;
 
@@ -274,17 +257,15 @@
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 400);
+                }, 300); // モバイルデバイスの解放ラグを考慮して300msに調整
             } 
         };
         
         recognition.onerror = (ev) => { 
-            console.warn("認識エラー:", ev.error);
             if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
                 try { recognition.stop(); } catch(e){}
-            } else if (ev.error === 'not-allowed') {
-                updateStatus('error', "マイクの権限が拒否されました。");
-                stopMedia();
+            } else {
+                console.warn("認識エラー:", ev.error); 
             }
         };
         
@@ -296,23 +277,12 @@
         clearTimeout(restartTimeoutId);
         
         if (recognition) { 
-            recognition.onstart = null;
             recognition.onend = null; 
             recognition.onerror = null;
-            recognition.onresult = null;
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-
-        // AudioContextのリソースを解放
-        if (gainNode) { gainNode.disconnect(); gainNode = null; }
-        if (mediaStreamSource) { mediaStreamSource.disconnect(); mediaStreamSource = null; }
-        if (mediaStreamDestination) { mediaStreamDestination.disconnect(); mediaStreamDestination = null; }
-        if (audioContext) { try { await audioContext.close(); } catch(e){} audioContext = null; }
-
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
     }
 
     async function startStream() {
@@ -326,33 +296,14 @@
             }
         };
 
-        // 生のマイクストリームを取得
+        // マイクストリームの取得（ここで初めてブラウザの権限許可を求める）
         stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // 許可が得られたこのタイミングで、利用可能なマイク一覧をセレクトボックスに復活させる
         await refreshDevices();
 
-        // 【感度調整機能の復元】AudioContextを使って音量を増幅
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioContext = new AudioContext();
-        mediaStreamSource = audioContext.createMediaStreamSource(stream);
-        gainNode = audioContext.createGain();
-        
-        // 感度選択の値を反映
-        gainNode.gain.value = parseFloat(gainSelect.value);
-        mediaStreamDestination = audioContext.createMediaStreamDestination();
-
-        // 接続: マイク → ゲイン(音量調節) → 仮想デスティネーション
-        mediaStreamSource.connect(gainNode);
-        gainNode.connect(mediaStreamDestination);
-
         const rec = setupRecognition();
-        if (rec) {
-            // Android Chromeの処理ラグを考慮し、ウェイトを置いて安全に起動
-            setTimeout(() => {
-                if (isActive && rec) {
-                    try { rec.start(); } catch(e) { console.error(e); }
-                }
-            }, 300);
-        }
+        if (rec) rec.start();
     }
 
     startBtn.onclick = async () => {
@@ -365,21 +316,17 @@
         } catch (e) {
             console.error(e);
             updateStatus('error', "起動失敗。設定を確認してください。");
-            await stopMedia();
+            startBtn.disabled = false;
+            isActive = false;
         }
     };
 
     stopBtn.onclick = async () => {
+        startBtn.disabled = true;
         await stopMedia();
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
         updateStatus('', "停止しました。");
-    };
-
-    // 感度（ゲイン）が変更されたら、稼働中であればリアルタイムに適用
-    gainSelect.onchange = () => {
-        if (gainNode) {
-            gainNode.gain.value = parseFloat(gainSelect.value);
-            addLog(`感度を ${gainSelect.value} 倍に変更しました`, false);
-        }
     };
 
     copyBtn.onclick = async () => {
@@ -442,8 +389,9 @@
         } 
     };
 
+    // 初期読み込み時は安全な仮のオプションを生成してクラッシュを防ぐ
     window.onload = () => {
-        refreshDevices().catch(e => console.log("初期化スキップ"));
+        refreshDevices().catch(e => console.log("初期化待機"));
     };
 </script>
 </body>
