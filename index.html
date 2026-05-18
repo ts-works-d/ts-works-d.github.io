@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（堅牢・クラッシュ対策版）</title>
+    <title>逐語録（最速レスポンス・完全最適化版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（堅牢・クラッシュ対策版）</h2>
+            <h2>逐語録（最速レスポンス・完全最適化版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -75,7 +75,7 @@
                     </select>
                 </div>
                 <div class="setting-label">
-                    <span>ノイズ軽減（自動適正化）</span>
+                    <span>ノイズ軽減（ネイティブ自動調整）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle" checked>
                         <span class="slider"></span>
@@ -120,10 +120,7 @@
 
     let recognition = null;
     let isActive = false;
-    let isRecognizingNow = false; 
-    let watchdogTimerId = null; // ブラウザクラッシュを絶対に防ぐための安全監視タイマー
-    let lastFinalText = "";
-    const isAndroid = /Android/i.test(navigator.userAgent);
+    let lastPhrase = "";
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -139,10 +136,10 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：稼働中"; 
+            connText.innerText = "音声認識：常時接続中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
-            connText.innerText = "音声認識：停止またはエラー"; 
+            connText.innerText = "音声認識：停止中"; 
             statusDisp.style.background = "#f8d7da"; 
         } else { 
             connText.innerText = "音声認識：待機中"; 
@@ -170,7 +167,7 @@
         } catch (e) { console.error(e); }
     }
 
-    function buildSpeechRecognitionEngine() {
+    function launchSpeechEngine() {
         if (recognition) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -183,8 +180,8 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // Androidはバッファ増殖を100%防ぐため単発型、PCは途切れのない連続型
-        recognition.continuous = !isAndroid;
+        // PC・Androidともに、フリーズの元になる終了処理を避けるため常時接続（continuous=true）
+        recognition.continuous = true;
 
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
@@ -192,33 +189,43 @@
         }
 
         recognition.onstart = () => {
-            isRecognizingNow = true;
-            updateStatus('online', "システム稼働中：お話しください。");
+            updateStatus('online', "マイク稼働中：お話しください。");
         };
 
         recognition.onresult = (e) => {
             let interimText = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let result = e.results[i];
+                let cleanedText = result[0].transcript.trim();
+
+                // フィラー（無駄な言葉）をリアルタイム除去
+                const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
+                cleanedText = cleanedText.replace(fillerRegex, "").trim();
+
+                if (cleanedText === "") continue;
+
                 if (result.isFinal) {
-                    let cleanedText = result[0].transcript.trim();
-                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
-                    cleanedText = cleanedText.replace(fillerRegex, "").trim();
-                    
-                    if (cleanedText === "" || cleanedText === lastFinalText) continue;
-                    lastFinalText = cleanedText;
+                    // 【多重表示ガード】直前の確定文字と完全に同じなら無視
+                    if (cleanedText === lastPhrase) continue;
+                    lastPhrase = cleanedText;
 
-                    const currentFinal = finalSpan.innerText.trim();
-                    let separator = currentFinal !== "" ? "\n" : "";
-                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-
-                    finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true);
+                    outputFinalText(cleanedText);
                     interimText = '';
                 } else {
-                    interimText += result[0].transcript;
+                    // Androidが文字を溜め込んで遅延するのを防ぐため、未確定（interim）の段階でも
+                    // 一定以上の長さ、または読点的な間を検知したらプログラム側で擬似的に最速確定させる
+                    if (cleanedText.length > 25 || (cleanedText.length > 8 && e.results.length > i + 1)) {
+                        if (cleanedText !== lastPhrase) {
+                            lastPhrase = cleanedText;
+                            outputFinalText(cleanedText);
+                        }
+                        interimText = '';
+                    } else {
+                        interimText = cleanedText;
+                    }
                 }
             }
+
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
                 addLog(interimText, false);
@@ -227,39 +234,40 @@
         };
 
         recognition.onend = () => {
-            isRecognizingNow = false;
             recognition = null;
+            // 万が一意図せず切れた場合のみ、安全に即時復帰
+            if (isActive) {
+                setTimeout(() => { if (isActive) launchSpeechEngine(); }, 200);
+            }
         };
 
         recognition.onerror = (ev) => {
             if (ev.error === 'not-allowed') {
-                updateStatus('error', "マイク権限がありません。");
-                stopProcess();
+                updateStatus('error', "マイク権限が拒否されました。");
+                stopEngine();
             }
         };
 
         try {
             recognition.start();
         } catch(e) {
-            isRecognizingNow = false;
             recognition = null;
         }
     }
 
-    // クラッシュを物理遮断する安全な一定間隔（1秒ごと）の常時監視システム
-    function startWatchdog() {
-        if (watchdogTimerId) clearInterval(watchdogTimerId);
-        watchdogTimerId = setInterval(() => {
-            if (isActive && !isRecognizingNow) {
-                buildSpeechRecognitionEngine();
-            }
-        }, 1000); // 1秒間隔にすることで無限ループ過負荷を100%防止
+    function outputFinalText(text) {
+        const currentFinal = finalSpan.innerText.trim();
+        let separator = currentFinal !== "" ? "\n" : "";
+        if (!/[。？！?!]$/.test(text)) text += "。";
+
+        finalSpan.innerText += separator + text;
+        addLog(text, true);
+        interimSpan.innerText = "";
+        outputBox.scrollTop = outputBox.scrollHeight;
     }
 
-    function stopProcess() {
+    function stopEngine() {
         isActive = false;
-        isRecognizingNow = false;
-        if (watchdogTimerId) { clearInterval(watchdogTimerId); watchdogTimerId = null; }
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
@@ -274,25 +282,22 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        lastFinalText = "";
-        updateStatus('connecting', "エンジンを起動しています...");
-        buildSpeechRecognitionEngine();
-        startWatchdog();
+        lastPhrase = "";
+        updateStatus('connecting', "システムを起動中...");
+        launchSpeechEngine();
     };
 
     stopBtn.onclick = () => {
-        stopProcess();
+        stopEngine();
     };
 
-    // 各種選択ボックス変更時（感度・ノイズ変更でのログは一切出力されません）
+    // 各種変更処理（ログは一切出力されず、エンジンへネイティブにバインドされます）
     micSelect.onchange = () => {
         if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
-
     gainSelect.onchange = () => {
         if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
-
     noiseToggle.onchange = () => {
         if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
@@ -329,7 +334,7 @@
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-            lastFinalText = "";
+            lastPhrase = "";
         }
     };
 
