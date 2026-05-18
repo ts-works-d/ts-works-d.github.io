@@ -259,7 +259,8 @@
         const deviceId = micSelect.value;
         const constraints = {
             audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
+//                deviceId: deviceId ? { exact: deviceId } : undefined,
+                deviceId: deviceId ? deviceId : undefined,
                 echoCancellation: true,
                 noiseSuppression: noiseToggle.checked,
                 autoGainControl: true
