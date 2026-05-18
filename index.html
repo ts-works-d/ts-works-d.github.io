@@ -2,402 +2,412 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>逐語録 Pro - Zero Drop (ボーカル抽出特化・フル機能安定版)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアルタイム文字起こしツール</title>
     <style>
-        :root { --bg: #0d1117; --text: #c9d1d9; --accent: #58a6ff; --border: #30363d; --danger: #f85149; --success: #238636; --warning: #ffc107; --info: #17a2b8; --secondary: #6c757d; }
-        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
-        .toolbar { background: #161b22; padding: 10px 15px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-        .tool-group { display: flex; align-items: center; gap: 5px; }
-        label { font-size: 11px; color: #8b949e; }
-        button, select { background: #21262d; color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        #btn-start { background: var(--success); color: white; border: none; font-weight: bold; }
-        #btn-stop { background: var(--danger); color: white; border: none; }
-        .filter-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #adbac7; background: #222; padding: 5px 10px; border-radius: 20px; border: 1px solid #444; }
-        
-        /* ログパネル並列化のためのコンテナレイアウト */
-        .workspace { flex: 1; display: flex; overflow: hidden; }
-        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
-        
-        #log-screen { flex: 1; padding: 20px 30px; overflow-y: auto; font-size: 18px; line-height: 1.6; border-bottom: 1px solid var(--border); background: #0d1117; }
-        #interim-area { padding: 15px 30px; min-height: 3em; background: #0d1117; font-size: 18px; line-height: 1.6; }
-        
-        .block { margin-bottom: 0.8em; border-left: 2px solid var(--accent); padding-left: 12px; min-height: 1.6em; word-break: break-all; white-space: pre-wrap; }
-        .interim { color: #8b949e; font-style: italic; }
-        
-        /* index02由来の認識中流動ログパネル（ダークモード風調整） */
-        .log-panel { width: 300px; background: #161b22; display: flex; flex-direction: column; box-sizing: border-box; }
-        .log-panel-title { padding: 10px 15px; font-size: 12px; font-weight: bold; border-bottom: 1px solid var(--border); color: #8b949e; text-align: center; }
-        .log-area { flex: 1; padding: 15px; font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #39ff14; overflow-y: auto; box-sizing: border-box; line-height: 1.4; }
-        .log-entry { margin-bottom: 6px; border-left: 2px solid #333; padding-left: 6px; word-break: break-all; }
-        .log-time { color: #8b949e; margin-right: 5px; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-        .monitor { background: #010409; padding: 8px 20px; border-top: 1px solid var(--border); }
-        .meter-bg { height: 3px; background: #333; border-radius: 2px; margin: 5px 0; }
-        #meter-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.1s ease-out; }
-        #status-bar { font-size: 10px; color: #6e7681; display: flex; justify-content: space-between; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            line-height: 1.5;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background-color: #ffffff;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            text-align: center;
+            color: #1d1d1f;
+        }
+
+        .status-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #f5f5f7;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .status-label {
+            font-size: 14px;
+            color: #86868b;
+        }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            background-color: #86868b;
+            color: #ffffff;
+        }
+
+        .status-badge.active {
+            background-color: #34c759;
+        }
+
+        .status-badge.error {
+            background-color: #ff3b30;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 80px;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s, transform 0.1s;
+            background-color: #0071e3;
+            color: #ffffff;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:disabled {
+            background-color: #e8e8ed !important;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #stop {
+            background-color: #ff3b30;
+        }
+
+        #copy {
+            background-color: #86868b;
+        }
+
+        #save {
+            background-color: #34c759;
+        }
+
+        #clear {
+            background-color: #ebebeb;
+            color: #ff3b30;
+        }
+
+        .settings-panel {
+            background-color: #f5f5f7;
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+        }
+
+        .setting-item span {
+            color: #555;
+            align-items: center;
+        }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #e8e8ed;
+            transition: .3s;
+            border-radius: 24px;
+        }
+
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+
+        input:checked + .slider {
+            background-color: #34c759;
+        }
+
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        .output-box {
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 12px;
+            min-height: 180px;
+            max-height: 300px;
+            overflow-y: auto;
+            background-color: #ffffff;
+            font-size: 16px;
+            white-space: pre-wrap;
+        }
+
+        .interim {
+            color: #86868b;
+        }
+
+        .status-area {
+            font-size: 0.85em;
+            text-align: center;
+            color: #666;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
 
-<div class="toolbar">
-    <div class="tool-group">
-        <label>入力:</label>
-        <select id="mic-select"><option>読み込み中...</option></select>
-    </div>
-    <div class="tool-group">
-        <label>感度:</label>
-        <select id="boost-select">
-            <option value="1.0">1.0</option>
-            <option value="2.0">2.0</option>
-            <option value="3.0">3.0</option>
-            <option value="4.0" selected>4.0</option>
-            <option value="5.0">5.0</option>
-            <option value="6.0">6.0</option>
-            <option value="7.0">7.0</option>
-            <option value="8.0">8.0</option>
-            <option value="9.0">9.0</option>
-            <option value="10.0">10.0</option>
-            <option value="11.0">11.0</option>
-            <option value="12.0">12.0</option>
-        </select>
-    </div>
-    <div class="filter-toggle">
-        <input type="checkbox" id="bgm-filter">
-        <label for="bgm-filter">声のみ抽出 (ノイズ除去)</label>
-    </div>
-    <button id="btn-start" disabled>開始</button>
-    <button id="btn-stop" disabled>停止</button>
-    <div style="margin-left: auto; display: flex; gap: 8px;">
-        <button onclick="resetPermissions()">権限リセット</button>
-        <button onclick="copyAll()">コピー</button>
-        <button onclick="saveAll()" style="background: var(--success); border: none;">保存</button>
-        <button onclick="clearAll()" style="color: var(--danger);">クリア</button>
-    </div>
-</div>
+<div class="container">
+    <h1>リアルタイム文字起こし</h1>
 
-<div class="workspace">
-    <div class="main-content">
-        <div id="log-screen"></div>
-        <div id="interim-area">
-            <div id="active-line" class="block interim">ここに認識結果が表示されます...</div>
+    <div class="status-container">
+        <span class="status-label">ステータス</span>
+        <span id="statusBadge" class="status-badge">停止中</span>
+    </div>
+
+    <div class="controls">
+        <button id="start">認識開始</button>
+        <button id="stop" disabled>停止</button>
+    </div>
+
+    <div class="settings-panel">
+        <div class="setting-item">
+            <span>フィラー除去 (えー、あの等)</span>
+            <label class="switch">
+                <input type="checkbox" id="fillerToggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="setting-item">
+            <span>改行を多めにする</span>
+            <label class="switch">
+                <input type="checkbox" id="breakToggle" checked>
+                <span class="slider"></span>
+            </label>
         </div>
     </div>
-    <div class="log-panel">
-        <div class="log-panel-title">認識中データストリーム (最新50件)</div>
-        <div id="log-area" class="log-area"></div>
-    </div>
-</div>
 
-<div class="monitor">
-    <div id="status-bar">
-        <span id="engine-status">READY</span>
-        <span id="mode-status" style="color: var(--accent);">VOCAL EXTRACTOR + STREAM LOG ACTIVE</span>
+    <div class="output-box" id="outputBox">
+        <span id="finalSpan"></span>
+        <span id="interimSpan" class="interim"></span>
     </div>
-    <div class="meter-bg"><div id="meter-fill"></div></div>
+
+    <div class="controls">
+        <button id="copy">コピー</button>
+        <button id="save">保存</button>
+        <button id="clear">クリア</button>
+    </div>
+
+    <div id="statusArea" class="status-area"></div>
 </div>
 
 <script>
-    let recognition = null;
-    let isRunning = false;
-    let audioCtx = null, stream = null, source = null, analyser = null;
-    let gainNode = null, bHighPass = null, bPeaking = null;
-    let animationFrameId = null;
-    let restartTimeoutId = null;
-    let multiplier = 4.0;
+    // Android対策：webkit付きを前に配置して優先して呼び出します（デザインへの影響はありません）
+    const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
 
-    function resetPermissions() { window.location.reload(); }
-
-    async function init() {
-        try {
-            const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
-            temp.getTracks().forEach(t => t.stop());
-            await refreshDevices();
-            document.getElementById('btn-start').disabled = false;
-        } catch (e) { 
-            document.getElementById('engine-status').innerText = "MIC ERROR"; 
-        }
-    }
-
-    async function refreshDevices() {
-        const sel = document.getElementById('mic-select');
-        try {
-            const devs = await navigator.mediaDevices.enumerateDevices();
-            const currentVal = sel.value;
-            sel.innerHTML = '';
-            devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId;
-                opt.text = d.label || `Mic ${i + 1}`;
-                sel.appendChild(opt);
-            });
-            if(currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
-                sel.value = currentVal;
-            }
-        } catch(e) { console.error(e); }
-    }
-
-    // index02仕様のストリームログ追加ロジック
-    function addStreamLog(text, isFinal) {
-        const logArea = document.getElementById('log-area');
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        const timeStr = new Date().toLocaleTimeString();
-        entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${isFinal ? '<b>[確定]</b> ' : ''}${text}</span>`;
-        logArea.appendChild(entry);
-        logArea.scrollTop = logArea.scrollHeight;
-        if (logArea.childNodes.length > 50) logArea.removeChild(logArea.firstChild);
-    }
-
-    // テキスト確定時のブロック処理（index01のフィラー除去＋index02の高度な改行/句読点処理のマージ）
-    function addFinalBlock(text) {
-        let cleanedText = text.trim();
-        if (!cleanedText) return;
-
-        // 高度なフィラー除去
-        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-        if (cleanedText === "") return;
-
-        const screen = document.getElementById('log-screen');
-        
-        // 重複除去のチェック
-        if (screen.lastElementChild && (screen.lastElementChild.innerText.trim() === cleanedText || screen.lastElementChild.innerText.trim() === cleanedText + "。")) return;
-
-        const newBlock = document.createElement('div');
-        newBlock.className = 'block';
-
-        // index02流の文末句読点判定
-        const hasPunctuation = /[。？！\?\!]$/.test(cleanedText);
-        newBlock.innerText = cleanedText + (hasPunctuation ? "" : "。");
-        
-        screen.appendChild(newBlock);
-        addStreamLog(cleanedText, true); // 確定ログをサイドストリームへ流す
-
-        requestAnimationFrame(() => {
-            screen.scrollTop = screen.scrollHeight;
-        });
-    }
-
-    function setupRecognition() {
-        const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!Speech) return null;
-
-        const rec = new Speech();
-        rec.lang = 'ja-JP';
-        rec.continuous = true;
-        rec.interimResults = true;
-
-        rec.onstart = () => {
-            document.getElementById('engine-status').innerText = "LIVE";
-        };
-
-        rec.onresult = (e) => {
-            const activeLine = document.getElementById('active-line');
-            let interimStr = "";
-
-            for (let i = e.resultIndex; i < e.results.length; i++) {
-                if (e.results[i].isFinal) {
-                    addFinalBlock(e.results[i][0].transcript);
-                } else {
-                    interimStr += e.results[i][0].transcript;
-                }
-            }
-            
-            const nextText = interimStr || "...";
-            if (activeLine.innerText !== nextText) {
-                activeLine.innerText = nextText;
-                if (interimStr.trim() !== "") {
-                    addStreamLog(interimStr, false); // 途中経過ログをサイドストリームへ流す
-                }
-            }
-        };
-
-        // Edgeクラッシュ対策用の安全弁
-        rec.onend = () => {
-            if (isRunning) {
-                clearTimeout(restartTimeoutId);
-                restartTimeoutId = setTimeout(() => {
-                    if (isRunning && recognition) {
-                        try { recognition.start(); } catch(err) { console.warn("再起動失敗:", err); }
-                    }
-                }, 300);
-            }
-        };
-
-        rec.onerror = (ev) => {
-            if (ev.error !== 'no-speech') console.warn("認識エラー:", ev.error);
-        };
-
-        recognition = rec;
-        return rec;
-    }
-
-    // フィルターパラメーターのリアルタイム更新
-    function updateParams() {
-        if (!audioCtx || !gainNode || !bHighPass || !bPeaking) return;
-        const t = audioCtx.currentTime;
-        
-        gainNode.gain.setTargetAtTime(multiplier, t, 0.05);
-        
-        const filterActive = document.getElementById('bgm-filter').checked;
-        if (filterActive) {
-            bHighPass.frequency.setTargetAtTime(150, t, 0.05); 
-            bPeaking.frequency.setTargetAtTime(1200, t, 0.05); 
-            bPeaking.Q.setTargetAtTime(0.5, t, 0.05);          
-            bPeaking.gain.setTargetAtTime(4, t, 0.05);         
-        } else {
-            bHighPass.frequency.setTargetAtTime(10, t, 0.05);
-            bPeaking.gain.setTargetAtTime(0, t, 0.05);
-        }
-    }
-
-    async function stopMedia() {
-        isRunning = false;
-        clearTimeout(restartTimeoutId);
-        if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
-
-        if (recognition) {
-            recognition.onend = null;
-            try { recognition.stop(); } catch(e){}
-            recognition = null;
-        }
-        if (bPeaking) { try { bPeaking.disconnect(); } catch(e){} bPeaking = null; }
-        if (bHighPass) { try { bHighPass.disconnect(); } catch(e){} bHighPass = null; }
-        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-        if (source) { try { source.disconnect(); } catch(e){} source = null; }
-        if (analyser) { try { analyser.disconnect(); } catch(e){} analyser = null; }
-        if (audioCtx) { try { await audioCtx.close(); } catch(e){} audioCtx = null; }
-        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
-    }
-
-    function updateVolumeMeter() {
-        if (!isRunning || !analyser) return;
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        
-        const meterFill = document.getElementById('meter-fill');
-        meterFill.style.width = Math.min(100, avg * 4) + "%"; 
-        animationFrameId = requestAnimationFrame(updateVolumeMeter);
-    }
-
-    async function startStream() {
-        const deviceId = document.getElementById('mic-select').value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                echoCancellation: true,
-                noiseSuppression: true, 
-                autoGainControl: true
-            }
-        };
-
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        await refreshDevices();
-
-        const rec = setupRecognition();
-        if (rec) rec.start();
-
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        source = audioCtx.createMediaStreamSource(stream);
-        
-        gainNode = audioCtx.createGain();
-        bHighPass = audioCtx.createBiquadFilter(); bHighPass.type = "highpass";
-        bPeaking = audioCtx.createBiquadFilter(); bPeaking.type = "peaking";
-        analyser = audioCtx.createAnalyser(); analyser.fftSize = 256; 
-
-        source.connect(gainNode).connect(bHighPass).connect(bPeaking).connect(analyser);
-        
-        updateParams();
-        updateVolumeMeter();
-    }
-
-    document.getElementById('btn-start').onclick = async () => {
-        try {
-            document.getElementById('btn-start').disabled = true;
-            document.getElementById('engine-status').innerText = "CONNECTING";
-            isRunning = true;
-            
-            multiplier = parseFloat(document.getElementById('boost-select').value);
-            await startStream();
-            
-            document.getElementById('btn-stop').disabled = false;
-        } catch (err) {
-            console.error(err);
-            document.getElementById('engine-status').innerText = "ERROR";
-            document.getElementById('btn-start').disabled = false;
-            isRunning = false;
-        }
-    };
-
-    document.getElementById('btn-stop').onclick = async () => {
-        document.getElementById('btn-stop').disabled = true;
-        await stopMedia();
-        
-        document.getElementById('btn-start').disabled = false;
-        document.getElementById('meter-fill').style.width = "0%";
-        document.getElementById('engine-status').innerText = "STOPPED";
-        document.getElementById('active-line').innerText = "停止中";
-    };
-
-    document.getElementById('boost-select').onchange = () => {
-        multiplier = parseFloat(document.getElementById('boost-select').value);
-        updateParams();
-    };
-
-    document.getElementById('bgm-filter').onchange = () => {
-        updateParams();
-    };
-
-    document.getElementById('mic-select').onchange = async () => {
-        if (isRunning) {
-            document.getElementById('engine-status').innerText = "RECONNECTING";
-            await stopMedia();
-            isRunning = true;
-            await startStream();
-        }
-    };
-
-    function clearAll() { 
-        if(!confirm("表示されているテキストとログを消去しますか？")) return;
-        document.getElementById('log-screen').innerHTML = ''; 
-        document.getElementById('log-area').innerHTML = ''; 
-        document.getElementById('active-line').innerText = "...";
-    }
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const copyBtn = document.getElementById('copy');
+    const saveBtn = document.getElementById('save');
+    const clearBtn = document.getElementById('clear');
     
-    function copyAll() {
-        const text = Array.from(document.querySelectorAll('#log-screen .block')).map(b => b.innerText).join('\n');
-        if (!text.trim()) {
-            alert("コピーするテキストがありません。");
-            return;
-        }
-        navigator.clipboard.writeText(text).then(() => {
-            const originalText = document.getElementById('engine-status').innerText;
-            document.getElementById('engine-status').innerText = "COPIED!";
-            setTimeout(() => document.getElementById('engine-status').innerText = originalText, 1500);
-        }).catch(err => {
-            console.error("コピー失敗:", err);
-            alert("コピーに失敗しました。");
-        });
+    const statusBadge = document.getElementById('statusBadge');
+    const statusArea = document.getElementById('statusArea');
+    const finalSpan = document.getElementById('finalSpan');
+    const interimSpan = document.getElementById('interimSpan');
+    
+    const fillerToggle = document.getElementById('fillerToggle');
+    const breakToggle = document.getElementById('breakToggle');
+
+    let recognition = null;
+    let isUserStopping = false;
+
+    if (!SpeechRecognition) {
+        statusBadge.innerText = "未対応";
+        statusBadge.className = "status-badge error";
+        statusArea.innerText = "お使いのブラウザは音声認識に対応していません。";
+        startBtn.disabled = true;
     }
 
-    // index02仕様のファイル保存ロジック（index01の構造に最適化）
-    function saveAll() {
-        const text = Array.from(document.querySelectorAll('#log-screen .block')).map(b => b.innerText).join('\n');
-        if (!text.trim()) {
-            alert("保存するテキストがありません。");
-            return;
+    function initRecognition() {
+        if (!SpeechRecognition) return;
+        
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ja-JP';
+        recognition.continuous = true;
+        recognition.interimResults = true;
+
+        recognition.onstart = () => {
+            statusBadge.innerText = "認識中";
+            statusBadge.className = "status-badge active";
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusArea.innerText = "音声認識が稼働しています。";
+        };
+
+        recognition.onerror = (event) => {
+            if (event.error === 'no-speech') return;
+            statusArea.innerText = "エラー発生: " + event.error;
+            if (event.error === 'not-allowed') {
+                statusBadge.innerText = "拒否";
+                statusBadge.className = "status-badge error";
+                stopRecognition();
+            }
+        };
+
+        recognition.onend = () => {
+            if (!isUserStopping) {
+                statusArea.innerText = "自動復帰中...";
+                try {
+                    recognition.start();
+                } catch (e) {
+                    stopRecognition();
+                }
+            } else {
+                stopRecognition();
+            }
+        };
+
+        recognition.onresult = (event) => {
+            let interimTranscript = '';
+            
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
+                let transcript = event.results[i][0].transcript;
+                
+                if (event.results[i].isFinal) {
+                    let cleanedText = transcript.trim();
+                    
+                    if (fillerToggle.checked) {
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの|えっと|まー|ま、|うーん)(、|\s)?/gi;
+                        cleanedText = cleanedText.replace(fillerRegex, '');
+                    }
+                    
+                    if (cleanedText) {
+                        if (breakToggle.checked) {
+                            finalSpan.innerText += cleanedText + "\n";
+                        } else {
+                            finalSpan.innerText += cleanedText + "。";
+                        }
+                        
+                        const obj = document.getElementById('outputBox');
+                        obj.scrollTop = obj.scrollHeight;
+                    }
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+            interimSpan.innerText = interimTranscript;
+        };
+    }
+
+    function stopRecognition() {
+        statusBadge.innerText = "停止中";
+        statusBadge.className = "status-badge";
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        interimSpan.innerText = "";
+    }
+
+    startBtn.onclick = () => {
+        isUserStopping = false;
+        if (!recognition) initRecognition();
+        try {
+            recognition.start();
+        } catch (e) {
+            statusArea.innerText = "既に開始されています。";
         }
+    };
+
+    stopBtn.onclick = () => {
+        isUserStopping = true;
+        if (recognition) {
+            recognition.stop();
+        }
+        statusArea.innerText = "音声認識を停止しました。";
+    };
+
+    copyBtn.onclick = () => {
+        const text = finalSpan.innerText;
+        if (!text.trim()) return;
+        
+        try {
+            navigator.clipboard.writeText(text);
+            const originalText = copyBtn.innerText;
+            copyBtn.innerText = "コピー完了！";
+            setTimeout(() => copyBtn.innerText = originalText, 2000);
+        } catch (err) {
+            alert("長押しして手動コピーしてください：\n\n" + text);
+        }
+    };
+
+    saveBtn.onclick = () => {
+        const text = finalSpan.innerText;
+        if (!text.trim()) return;
         
         const now = new Date();
-        const timestamp = now.getFullYear() + 
-            String(now.getMonth() + 1).padStart(2, '0') + 
-            String(now.getDate()).padStart(2, '0') + '_' + 
-            String(now.getHours()).padStart(2, '0') + 
-            String(now.getMinutes()).padStart(2, '0') + 
+        const timestamp = now.getFullYear() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0') + "_" +
+            String(now.getHours()).padStart(2, '0') +
+            String(now.getMinutes()).padStart(2, '0') +
             String(now.getSeconds()).padStart(2, '0');
-        
+            
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -407,9 +417,15 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-    }
+    };
 
-    window.onload = init;
+    clearBtn.onclick = () => {
+        if (confirm("表示されているテキストを消去しますか？")) {
+            finalSpan.innerText = "";
+            interimSpan.innerText = "";
+            statusArea.innerText = "テキストをクリアしました。";
+        }
+    };
 </script>
 </body>
 </html>
