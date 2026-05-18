@@ -86,42 +86,82 @@
 </div>
 
 <script>
+    const micSelect = document.getElementById('mic-select');
+    const gainSelect = document.getElementById('gain-select');
+    const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
+    const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
     const statusDisp = document.getElementById('status-display');
+    const indicator = document.getElementById('indicator');
+    const connText = document.getElementById('conn-text');
 
     let recognition = null;
     let isActive = false;
     let restartTimeoutId = null;
-    let watchdogIntervalId = null; // Androidハング検知用
+    let watchdogIntervalId = null;
+    let activeStream = null; // ハードウェアマイク固定用ストリーム
 
-    // パフォーマンス・文字落ち対策用の超高速内部バッファ
-    let finalParagraphs = [];     // 確定テキストを配列で保持（DOM負荷軽減）
-    let confirmedSet = new Set();    // Androidの重複判定用
-    let processedIndices = new Set(); // イベントの2重処理防止用
-    let lastConfirmedText = "";     // 直前の確定テキスト全体を記憶
-    let lastEventTime = Date.now();  // 最終パケット受信時刻
+    // パフォーマンス向上・文字落ち・重複排除用バッファ
+    let finalParagraphs = [];     // 確定テキスト配列（DOM負荷の激減）
+    let confirmedSet = new Set();    // 同一文の重複防止用
+    let processedIndices = new Set(); // Androidのイベント重複インデックスガード
+    let lastConfirmedText = "";     // 直前の確定テキスト全体
+    let lastEventTime = Date.now();  // バックグラウンド凍結監視用時刻
 
-    function updateStatus(state, msg) {
+    function updateStatus(type, msg) {
         statusDisp.innerText = msg;
-        if (state === 'online') {
-            statusDisp.style.background = "#d4edda";
+        indicator.className = "indicator " + type;
+        if(type === 'online') { 
+            connText.innerText = "音声認識：マイクON（お話しください）"; 
+            statusDisp.style.background = "#d4edda"; 
             statusDisp.style.color = "#155724";
-        } else if (state === 'offline') {
-            statusDisp.style.background = "#e2e3e5";
-            statusDisp.style.color = "#383d41";
-        } else {
-            statusDisp.style.background = "#fff3cd";
+        } else if(type === 'error') { 
+            connText.innerText = "音声認識：エラー停止"; 
+            statusDisp.style.background = "#f8d7da"; 
+            statusDisp.style.color = "#721c24";
+        } else if(type === 'connecting') {
+            connText.innerText = "音声認識 : 接続準備中..."; 
+            statusDisp.style.background = "#fff3cd"; 
             statusDisp.style.color = "#856404";
+        } else { 
+            connText.innerText = "音声認識：停止中"; 
+            statusDisp.style.background = "#f8f9fa"; 
+            statusDisp.style.color = "#383d41";
         }
     }
 
-    // Android雪だるま現象対策：重複する文字数を正確に算出するロジック
+    // 利用可能なマイク一覧をセレクトボックスへ同期
+    async function refreshMicDevices() {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            const currentSelected = micSelect.value;
+            
+            micSelect.innerHTML = '<option value="">-- マイクを選択（変更時に自動適用） --</option>';
+            
+            audioInputs.forEach((device, i) => {
+                const opt = document.createElement('option');
+                opt.value = device.deviceId;
+                opt.text = device.label || `マイク ${i + 1}`;
+                micSelect.appendChild(opt);
+            });
+
+            if (currentSelected && Array.from(micSelect.options).some(o => o.value === currentSelected)) {
+                micSelect.value = currentSelected;
+            }
+        } catch (e) {
+            console.error("デバイス一覧の取得失敗:", e);
+        }
+    }
+
+    // Android特有の「雪だるま式重複バグ」を文字単位で厳密にカットするロジック
     function getOverlapLength(str1, str2) {
         const minLen = Math.min(str1.length, str2.length);
         let overlap = 0;
@@ -133,12 +173,44 @@
         return overlap;
     }
 
+    // 選択されたマイクデバイスをハードウェア的に確実に掴み起こす
+    async function acquireSelectedMicStream() {
+        if (activeStream) {
+            activeStream.getTracks().forEach(t => t.stop());
+            activeStream = null;
+        }
+
+        const constraints = {
+            audio: {
+                echoCancellation: noiseToggle.checked,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+
+        if (micSelect && micSelect.value) {
+            constraints.audio.deviceId = { exact: micSelect.value };
+        }
+
+        try {
+            activeStream = await navigator.mediaDevices.getUserMedia(constraints);
+            await refreshMicDevices(); // ラベル名アップデートのために再取得
+        } catch (err) {
+            console.error("指定マイクの初期化失敗、標準マイクでリトライします:", err);
+            try {
+                activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch(e) {
+                console.error("マイクの完全取得失敗:", e);
+            }
+        }
+    }
+
     function initRecognition() {
-        if (recognition) return; // 多重生成を確実にブロック
+        if (recognition) return; // 多重生成による競合ハングを防止
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            updateStatus('offline', "ブラウザが音声認識に対応していません");
+            updateStatus('error', "ブラウザが音声認識に対応していません");
             return;
         }
 
@@ -148,7 +220,7 @@
         recognition.continuous = true;
 
         recognition.onstart = () => {
-            updateStatus('online', "認識中：お話しください");
+            updateStatus('online', "認識中：声をしっかり拾っています。");
             lastEventTime = Date.now();
             startWatchdog();
         };
@@ -166,25 +238,20 @@
                 const cleanText = transcript.replace(/[\s。、]/g, "");
 
                 if (result.isFinal) {
-                    // 同じインデックスの重複確定を防止
                     if (processedIndices.has(i)) continue;
                     processedIndices.add(i);
 
-                    // 同一テキストの重複出力を防止
                     if (confirmedSet.has(cleanText)) continue;
 
-                    // 【最優先・文字落ち＆重複対策】Android特有の巻き込み重複を厳密にカット
+                    // 【文字落ち＆重複対策】直前確定文の巻き込み重複部分を文字ベースで柔軟に検出・削り落とし
                     if (lastConfirmedText) {
                         const cleanLast = lastConfirmedText.replace(/[\s。、]/g, "");
                         const overlap = getOverlapLength(cleanLast, cleanText);
                         if (overlap > 0) {
                             let rawOverlap = 0;
                             let cleanIdx = 0;
-                            // 表記揺れに対応するため、記号を除外した文字数ベースで切り出し位置を特定
                             for (let j = 0; j < transcript.length; j++) {
-                                if (!/[\s。、]/.test(transcript[j])) {
-                                    cleanIdx++;
-                                }
+                                if (!/[\s。、]/.test(transcript[j])) cleanIdx++;
                                 if (cleanIdx > overlap) {
                                     rawOverlap = j;
                                     break;
@@ -198,33 +265,30 @@
 
                     let cleanedText = transcript.trim();
                     
-                    // 元のフィラー（えー、あの）除去ロジックを100%継承
+                    // indexssの「フィラー除去（えー、あの、等）」ロジックを完全引き継ぎ
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    // 判定用セットに保存
                     confirmedSet.add(cleanText);
-                    lastConfirmedText = result[0].transcript; // 重複判定用に加工前の全体を保存
+                    lastConfirmedText = result[0].transcript; // 重複検出用に生の全体を記憶
 
-                    // 文末の自動句点付与
+                    // 自動句点付与
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    // DOMには直接足さず、内部配列（バッファ）に高速Push
+                    // メモリ内配列に格納（DOMへの直接足し算を回避して劇的に軽量化）
                     finalParagraphs.push(cleanedText);
                     hasNewFinal = true;
                 } else {
-                    // 未確定時も、すでに確定済みの文章はプレビューに表示させない
                     if (!processedIndices.has(i) && !confirmedSet.has(cleanText)) {
                         interimText += transcript;
                     }
                 }
             }
 
-            // 【最優先・パフォーマンス対策】DOMへの書き込みを一括化してレンダリングを最速化
+            // 【パフォーマンス対策】レンダリング負荷を最小にするバッチDOM描画
             if (hasNewFinal) {
-                // 配列を改行（または元のロジックに合わせた接続）で結合して一発描画
                 finalSpan.textContent = finalParagraphs.join("\n");
                 interimSpan.textContent = '';
                 outputBox.scrollTop = outputBox.scrollHeight;
@@ -236,43 +300,44 @@
             }
         };
 
-        // スマホ特有の自動切断に対するクリーンな再起動
         recognition.onend = () => {
             recognition = null;
             stopWatchdog();
-            
-            // 長時間起動時のメモリ肥大化を防ぐため、セッション終了ごとにインデックスをクリア
-            processedIndices.clear(); 
+            processedIndices.clear(); // 長時間セッションでのメモリ肥大化をクリア
 
             if (isActive) {
+                updateStatus('connecting', "無音による一時切断。自動的に安全に復帰します...");
                 clearTimeout(restartTimeoutId);
-                restartTimeoutId = setTimeout(() => {
+                restartTimeoutId = setTimeout(async () => {
                     if (isActive) {
+                        await acquireSelectedMicStream(); // 指定マイクを掴み直す
                         initRecognition();
                         if (recognition) {
                             try { recognition.start(); } catch(e) {}
                         }
                     }
-                }, 200);
+                }, 300);
             }
         };
 
-        // Androidで処理がぶつ切れてハングするのを防ぐ
         recognition.onerror = (ev) => {
             if (ev.error === 'no-speech' || ev.error === 'audio-capture' || ev.error === 'network') {
-                // stopではなくabortにすることで、Androidのフリーズを回避して即座に安全に再起動ルートへ流す
+                // stop()ではなくabort()にすることでAndroid特有のマイクフリーズを回避して高速に復帰ルートへ回す
                 try { recognition.abort(); } catch(e){}
+            } else if (ev.error === 'not-allowed') {
+                updateStatus('error', "マイク権限が拒否されました。");
+                pureStop();
             } else {
-                console.warn("認識エラー:", ev.error);
+                console.warn("SpeechRecognition Error:", ev.error);
             }
         };
     }
 
-    // Androidのバックグラウンドフリーズ（サイレント死）を強制復帰させるタイマー
+    // Android Chromeの画面スリープ・タブ移動等による「サイレントハング死」を防ぐ監視装置
     function startWatchdog() {
         stopWatchdog();
         watchdogIntervalId = setInterval(() => {
-            // 20秒間完全に無反応（パケットが来ない）かつ稼働中なら、内部でバグっていると判断して強制リスタート
+            // 20秒間稼働しているにも関わらず、エンジンから一切の反応パケットがない場合はハングとみなし強制再起動
             if (isActive && (Date.now() - lastEventTime > 20000)) {
                 lastEventTime = Date.now();
                 if (recognition) {
@@ -289,19 +354,38 @@
         }
     }
 
-    startBtn.onclick = () => {
+    // 認識エンジンとハードウェアストリームを完全にクリーンにする関数
+    function pureStop() {
+        clearTimeout(restartTimeoutId);
+        stopWatchdog();
+        if (recognition) {
+            try { recognition.abort(); } catch(e){}
+            recognition = null;
+        }
+        if (activeStream) {
+            activeStream.getTracks().forEach(t => t.stop());
+            activeStream = null;
+        }
+        interimSpan.textContent = "";
+    }
+
+    startBtn.onclick = async () => {
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        updateStatus('', "起動中...");
+        updateStatus('connecting', "マイク接続およびエンジンを初期化中...");
 
-        // バッファを完全初期化
+        // バッファの完全初期化
         finalParagraphs = [];
         confirmedSet.clear();
         processedIndices.clear();
         lastConfirmedText = "";
         lastEventTime = Date.now();
 
+        // 1. 指定マイクデバイスを物理的にバインド
+        await acquireSelectedMicStream();
+
+        // 2. エンジン始動
         if (!recognition) {
             initRecognition();
         }
@@ -310,31 +394,46 @@
             try {
                 recognition.start();
             } catch (e) {
-                console.error(e);
-                // 既に裏で生きていて衝突した場合は一度強制終了させて200ms後に再着火
-                try {
-                    recognition.abort();
-                    setTimeout(() => { if(isActive) recognition.start(); }, 200);
-                } catch(err) {
-                    updateStatus('offline', "起動に失敗しました。再読込してください。");
-                }
+                pureStop();
+                setTimeout(() => {
+                    if (isActive) {
+                        initRecognition();
+                        try { recognition.start(); } catch(err) {
+                            updateStatus('error', "起動に失敗しました。再読込してください。");
+                        }
+                    }
+                }, 300);
             }
         }
     };
 
     stopBtn.onclick = () => {
         isActive = false;
-        clearTimeout(restartTimeoutId);
-        stopWatchdog();
         startBtn.disabled = false;
         stopBtn.disabled = true;
-        if (recognition) {
-            try { recognition.abort(); } catch(e){} // stopよりabortの方がAndroidではリソースが即時解放されます
-            recognition = null;
-        }
-        interimSpan.textContent = "";
-        updateStatus('offline', "停止しました");
+        pureStop();
+        updateStatus('', "停止しました");
     };
+
+    // マイク・感度・ノイズ切り替え時に自動的に新環境へクリーンにホットリスタートする
+    async function handleConfigChange() {
+        if (!isActive) return;
+        pureStop();
+        isActive = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        updateStatus('connecting', "設定を適用してマイクを再接続中...");
+        
+        await acquireSelectedMicStream();
+        initRecognition();
+        if (recognition) {
+            try { recognition.start(); } catch(e){}
+        }
+    }
+
+    micSelect.onchange = handleConfigChange;
+    gainSelect.onchange = handleConfigChange;
+    noiseToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
         const text = finalSpan.textContent;
@@ -349,8 +448,24 @@
         }
     };
 
+    saveBtn.onclick = () => {
+        const text = finalSpan.textContent;
+        if (!text.trim()) return;
+        const now = new Date();
+        const timestamp = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `逐語録_${timestamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     clearBtn.onclick = () => {
-        if (confirm("表示されているテキストを消去しますか？")) {
+        if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.textContent = "";
             interimSpan.textContent = "";
             finalParagraphs = [];
@@ -360,7 +475,7 @@
         }
     };
 
-    // 画面が非アクティブから戻ってきた際に、Androidが音声認識を勝手に切断していたら自動復帰
+    // バックグラウンド等からタブへ戻ってきた際に、エンジンが勝手に切断されていた場合の救済
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible' && isActive && !recognition) {
             lastEventTime = Date.now();
@@ -368,5 +483,17 @@
             if (recognition) try { recognition.start(); } catch(e){}
         }
     });
-</script></body>
+
+    window.onload = async () => {
+        try {
+            // 初回アクセス時に仮ストリームを開けてラベル名（デバイス名）のアクセスを許可させる
+            const initPermStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            await refreshMicDevices();
+            initPermStream.getTracks().forEach(t => t.stop()); // ロード完了後は即切断
+        } catch(e) {
+            console.warn("起動時マイク未許可、またはマイクが接続されていません。");
+        }
+    };
+</script>
+</body>
 </html>
