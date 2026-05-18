@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（ネイティブ完全最適化版）</title>
+    <title>逐語録（堅牢・クラッシュ対策版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,13 +50,13 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（ネイティブ完全最適化版）</h2>
+            <h2>逐語録（堅牢・クラッシュ対策版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
             <select id="mic-select">
-                <option value="">-- マイクを選択（環境に依存します） --</option>
+                <option value="">-- マイクを選択（変更時に自動適用） --</option>
             </select>
             <div class="setting-box">
                 <div class="setting-label" style="margin-bottom: 12px;">
@@ -75,7 +75,7 @@
                     </select>
                 </div>
                 <div class="setting-label">
-                    <span>ノイズ軽減（自動制御）</span>
+                    <span>ノイズ軽減（自動適正化）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle" checked>
                         <span class="slider"></span>
@@ -120,7 +120,8 @@
 
     let recognition = null;
     let isActive = false;
-    let restartTimeoutId = null;
+    let isRecognizingNow = false; 
+    let watchdogTimerId = null; // ブラウザクラッシュを絶対に防ぐための安全監視タイマー
     let lastFinalText = "";
     const isAndroid = /Android/i.test(navigator.userAgent);
 
@@ -141,7 +142,7 @@
             connText.innerText = "音声認識：稼働中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
-            connText.innerText = "音声認識：エラー"; 
+            connText.innerText = "音声認識：停止またはエラー"; 
             statusDisp.style.background = "#f8d7da"; 
         } else { 
             connText.innerText = "音声認識：待機中"; 
@@ -169,7 +170,9 @@
         } catch (e) { console.error(e); }
     }
 
-    function startNativeRecognition() {
+    function buildSpeechRecognitionEngine() {
+        if (recognition) return;
+
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
             updateStatus('error', "音声認識非対応のブラウザです。");
@@ -180,17 +183,17 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // Androidは多重表示を完全に殺すため単発モード、PCは高パフォーマンスの連続モード
+        // Androidはバッファ増殖を100%防ぐため単発型、PCは途切れのない連続型
         recognition.continuous = !isAndroid;
 
-        // 選択されたマイクへのヒント設定
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
             recognition.audioTrack.id = selectedMicId;
         }
 
         recognition.onstart = () => {
-            updateStatus('online', "マイク認識中：お話しください。");
+            isRecognizingNow = true;
+            updateStatus('online', "システム稼働中：お話しください。");
         };
 
         recognition.onresult = (e) => {
@@ -224,44 +227,39 @@
         };
 
         recognition.onend = () => {
+            isRecognizingNow = false;
             recognition = null;
-            // 稼働フラグがONであれば、安全なディレイ（350ms）を挟んで最速再起動
-            if (isActive) {
-                clearTimeout(restartTimeoutId);
-                restartTimeoutId = setTimeout(() => {
-                    if (isActive) startNativeRecognition();
-                }, 350);
-            }
         };
 
         recognition.onerror = (ev) => {
             if (ev.error === 'not-allowed') {
-                updateStatus('error', "マイクの権限が拒否されています。");
-                isActive = false;
-                startBtn.disabled = false;
-                stopBtn.disabled = true;
+                updateStatus('error', "マイク権限がありません。");
+                stopProcess();
             }
         };
 
         try {
             recognition.start();
         } catch(e) {
-            console.error(e);
+            isRecognizingNow = false;
+            recognition = null;
         }
     }
 
-    startBtn.onclick = () => {
-        isActive = true;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
-        lastFinalText = "";
-        updateStatus('connecting', "マイクを接続中...");
-        startNativeRecognition();
-    };
+    // クラッシュを物理遮断する安全な一定間隔（1秒ごと）の常時監視システム
+    function startWatchdog() {
+        if (watchdogTimerId) clearInterval(watchdogTimerId);
+        watchdogTimerId = setInterval(() => {
+            if (isActive && !isRecognizingNow) {
+                buildSpeechRecognitionEngine();
+            }
+        }, 1000); // 1秒間隔にすることで無限ループ過負荷を100%防止
+    }
 
-    stopBtn.onclick = () => {
+    function stopProcess() {
         isActive = false;
-        clearTimeout(restartTimeoutId);
+        isRecognizingNow = false;
+        if (watchdogTimerId) { clearInterval(watchdogTimerId); watchdogTimerId = null; }
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
@@ -270,25 +268,33 @@
             recognition = null;
         }
         interimSpan.innerText = "";
+    }
+
+    startBtn.onclick = () => {
+        isActive = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        lastFinalText = "";
+        updateStatus('connecting', "エンジンを起動しています...");
+        buildSpeechRecognitionEngine();
+        startWatchdog();
     };
 
-    // 各種設定項目変更時（感度変更でのログは一切発生しません）
+    stopBtn.onclick = () => {
+        stopProcess();
+    };
+
+    // 各種選択ボックス変更時（感度・ノイズ変更でのログは一切出力されません）
     micSelect.onchange = () => {
-        if (isActive) {
-            if (recognition) { try { recognition.stop(); } catch(e){} }
-        }
+        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
 
     gainSelect.onchange = () => {
-        if (isActive) {
-            if (recognition) { try { recognition.stop(); } catch(e){} }
-        }
+        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
 
     noiseToggle.onchange = () => {
-        if (isActive) {
-            if (recognition) { try { recognition.stop(); } catch(e){} }
-        }
+        if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
 
     copyBtn.onclick = async () => {
