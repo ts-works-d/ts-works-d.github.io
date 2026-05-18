@@ -18,8 +18,8 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; display: none; } /* デバイス選択は不要なため非表示に */
-        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; display: none; } /* 不要な設定項目は非表示に */
+        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; display: none; }
+        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; display: none; }
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
@@ -120,8 +120,21 @@
         }
     }
 
+    // Android向けの重複除去関数
+    function eliminateDuplicate(currentText, newText) {
+        if (!currentText) return newText;
+        // 文字列の後ろから1文字ずつ削りながら、新テキストの先頭と一致する最大の重なりを探す
+        for (let i = 0; i < currentText.length; i++) {
+            let targetTail = currentText.substring(i);
+            if (newText.startsWith(targetTail)) {
+                // 重なっている部分を削った残りの文字を返す
+                return newText.substring(targetTail.length);
+            }
+        }
+        return newText;
+    }
+
     function setupRecognition() {
-        // indexssの安定したAndroid向け認識エンジン取得ロジック
         const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
         if (!SpeechRecognition) {
             updateStatus('error', "お使いのブラウザは音声認識に対応していません。");
@@ -143,13 +156,22 @@
                 let transcript = e.results[i][0].transcript;
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
-                    // indexssのフィラー除去ロジック
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    const currentFinal = finalSpan.innerText.trim();
+                    let currentFinal = finalSpan.innerText.trim();
+                    
+                    // 【Android重複対策】すでに確定している末尾の文章と、新しい文章に被りがないかチェック
+                    // 直近1フレーズ（改行区切り）を取り出して比較
+                    let sentences = currentFinal.split('\n');
+                    let lastSentence = sentences[sentences.length - 1] || "";
+                    
+                    // 重複部分を除去
+                    cleanedText = eliminateDuplicate(lastSentence.replace(/[。？！?!]/g, ""), cleanedText);
+                    if (cleanedText === "") continue;
+
                     const hasPunct = /[。？！?!]$/.test(currentFinal);
                     let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
@@ -217,7 +239,6 @@
             updateStatus('connecting', "初期化中...");
             isActive = true;
             
-            // indexssのロジック: getUserMediaによるマイク重複取得を行わず、直接SpeechRecognitionを起動する
             const rec = setupRecognition();
             if (rec) {
                 rec.start();
