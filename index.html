@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（完全ネイティブ安定版）</title>
+    <title>逐語録（マイク選択・バッファ完全解放版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -18,7 +18,7 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #eee; color: #555; }
+        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
@@ -48,13 +48,13 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（完全ネイティブ安定版）</h2>
+            <h2>逐語録（マイク選択・バッファ完全解放版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            <select id="mic-select" disabled>
-                <option value="">OS・システム既定のマイク（自動追従）</option>
+            <select id="mic-select">
+                <option value="">-- マイクを読み込み中... --</option>
             </select>
             <div class="setting-box">
                 <div class="setting-label" style="margin-bottom: 12px;">
@@ -91,6 +91,7 @@
 </div>
 
 <script>
+    const micSelect = document.getElementById('mic-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -133,22 +134,57 @@
         }
     }
 
-    function initRecognition() {
+    // マイク一覧を取得し、取得が終わったら即ストリームを閉じてバッファを完全に解放する
+    async function refreshDevices() {
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            
+            // 一瞬だけマイクを開いてブラウザにデバイス名を許可させる
+            const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            
+            // 用が済んだらマイクストリームを「即座に完全停止」してバッファを空にする
+            tempStream.getTracks().forEach(track => track.stop());
+
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            const currentVal = micSelect.value;
+            micSelect.innerHTML = '';
+            
+            audioInputs.forEach((d, i) => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId; 
+                opt.text = d.label || `マイク ${i + 1}`;
+                micSelect.appendChild(opt);
+            });
+            
+            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
+                micSelect.value = currentVal;
+            }
+        } catch (e) { 
+            console.error("マイク一覧取得失敗:", e);
+            micSelect.innerHTML = '<option value="">既定のマイク（許可が必要です）</option>';
+        }
+    }
+
+    function startRecognitionProcess() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            updateStatus('error', "音声認識機能非対応のブラウザです。");
+            updateStatus('error', "音声認識非対応のブラウザです。");
             return;
         }
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        
-        // Android/PC共通：ブラウザの最も安定するネイティブ連続認識モードで動作させる
         recognition.continuous = true;
 
+        // 【最重要】選択されたマイクのデバイスID情報のみをネイティブ側に直接引き渡す
+        if (micSelect.value) {
+            recognition.audioTrack = micSelect.value; 
+        }
+
         recognition.onstart = () => {
-            updateStatus('online', "認識中：マイクは正常に開通しています。");
+            updateStatus('online', "認識中：お話しください。");
         };
 
         recognition.onresult = (e) => {
@@ -158,7 +194,6 @@
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
-                    // フィラー（無駄な繋ぎ言葉）の簡易除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").trim();
                     
@@ -183,7 +218,7 @@
         };
 
         recognition.onend = () => {
-            // 音声バッファの詰まりを完全に防ぐため、350msの十分な余白を置いて再起動
+            // Androidのバッファ詰まりを完全に防ぐため、十分な余白（350ms）を置いて安全に再起動
             if (isActive) {
                 clearTimeout(restartTimeoutId);
                 restartTimeoutId = setTimeout(() => {
@@ -195,8 +230,17 @@
         };
 
         recognition.onerror = (ev) => {
-            console.warn("システム認識通知:", ev.error);
+            console.warn("認識システム通知:", ev.error);
         };
+
+        try {
+            recognition.start();
+        } catch(e) {
+            console.error(e);
+            updateStatus('error', "起動失敗。マイクの権限を許可してください。");
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+        }
     }
 
     startBtn.onclick = () => {
@@ -205,18 +249,7 @@
         stopBtn.disabled = false;
         updateStatus('connecting', "マイク接続中...");
         
-        if (!recognition) {
-            initRecognition();
-        }
-        
-        try {
-            recognition.start();
-        } catch(e) {
-            console.error(e);
-            updateStatus('error', "起動失敗。マイク許可を確認してください。");
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-        }
+        startRecognitionProcess();
     };
 
     stopBtn.onclick = () => {
@@ -227,6 +260,13 @@
         updateStatus('', "停止しました。");
         if (recognition) {
             try { recognition.stop(); } catch(e){}
+        }
+    };
+
+    micSelect.onchange = () => {
+        // 認識中にマイクが切り替えられたら、一度安全に終了させて新マイクで再起動する
+        if (isActive) {
+            if (recognition) { try { recognition.stop(); } catch(e){} }
         }
     };
 
@@ -263,6 +303,11 @@
         if (confirm("テキストを消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
         }
+    };
+
+    // 画面ロード時に一度だけ安全にマイク一覧を取得してリストを構築
+    window.onload = async () => {
+        await refreshDevices();
     };
 </script>
 </body>
