@@ -150,7 +150,6 @@
         }
     }
 
-    // デバイス一覧の取得処理
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -168,7 +167,7 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error("デバイス一覧取得失敗:", e); }
+        } catch (e) { console.error("デバイス取得失敗:", e); }
     }
 
     function setupRecognition() {
@@ -179,12 +178,12 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // Androidは安定稼働のためfalse（使い捨て）、PCは連続モードを維持
+        // Androidは多重増殖を殺すためfalse、PCは連続モードを維持
         recognition.continuous = !isAndroid;
 
-        // 【最重要修正】認識が正常に始まった段階で、Androidでもデバイス一覧を安全に再取得する
         recognition.onstart = async () => {
             updateStatus('online', "認識中：お話しください。");
+            // 音声入力開通後に安全にデバイス名を取得
             await refreshDevices();
         };
         
@@ -196,7 +195,6 @@
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
-                    // フィラー（えー、あの等）の削除
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
@@ -208,7 +206,7 @@
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true); // 確定文をログに送信
+                    addLog(cleanedText, true); 
                     interimText = ''; 
                 } else {
                     interimText += result[0].transcript;
@@ -217,7 +215,7 @@
             
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
-                addLog(interimText, false); // 認識中のテキストも確実にログエリアに表示
+                addLog(interimText, false); 
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
@@ -258,23 +256,20 @@
     }
 
     async function startStream() {
-        // 【衝突回避】Androidの認識エンジンと衝突させないため、PC環境でのみ明示的なマイクストリームの初期確保を行う
-        if (!isAndroid) {
-            const deviceId = micSelect.value;
-            const constraints = {
-                audio: {
-                    deviceId: deviceId ? deviceId : undefined,
-                    echoCancellation: true,
-                    noiseSuppression: noiseToggle.checked,
-                    autoGainControl: true
-                }
-            };
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                await refreshDevices();
-            } catch (e) { 
-                console.warn("マイク取得エラー:", e); 
+        // 【修正・絶対開通】全環境で確実にマイク入力をブラウザに通す
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? deviceId : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
             }
+        };
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) { 
+            console.warn("マイクデバイス取得警告:", e); 
         }
 
         const rec = setupRecognition();
@@ -368,10 +363,14 @@
         } 
     };
 
-    // 起動時にまず一度デバイス一覧の取得を試みる（PC環境用）
     window.onload = async () => {
+        // 初回ロード時は、PCのみ安全にデバイス一覧の初期スキャンを行う
         if (!isAndroid) {
-            await refreshDevices();
+            try {
+                const streamPlaceholder = await navigator.mediaDevices.getUserMedia({ audio: true });
+                await refreshDevices();
+                streamPlaceholder.getTracks().forEach(t => t.stop());
+            } catch(e){}
         }
     };
 </script>
