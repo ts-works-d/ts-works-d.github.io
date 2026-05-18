@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（常時接続・完全フリーズ＆ダブり防御版）</title>
+    <title>逐語録（全履歴総当たりガード・多重表示完全封印版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（常時接続・完全フリーズ＆ダブり防御版）</h2>
+            <h2>逐語録（全履歴総当たりガード・多重表示完全封印版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -121,9 +121,10 @@
     let recognition = null;
     let isActive = false;
     
-    // メモリ上でダブりを完全制御するための履歴バッファ
-    let lastConfirmedText = ""; 
-    let processedIndices = new Set(); 
+    // 【ダブり絶対阻止のコアデータベース】
+    // 過去に確定出力した文字列をすべて配列に永久ストックする
+    let globalConfirmedHistory = [];
+    let processedIndices = new Set();
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -139,7 +140,7 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：常時接続稼働中"; 
+            connText.innerText = "音声認識：常時接続中（重複超厳戒監視）"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
             connText.innerText = "音声認識：停止中"; 
@@ -182,9 +183,7 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        
-        // 【フリーズ絶対回避】途中で絶対に止めない常時接続モード
-        recognition.continuous = true;
+        recognition.continuous = true; // 【フリーズ撲滅】ブラウザ本来のネイティブ常時接続
 
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
@@ -192,7 +191,7 @@
         }
 
         recognition.onstart = () => {
-            updateStatus('online', "システム常時接続中：お話しください。");
+            updateStatus('online', "マイク常時接続中：お話しください。");
         };
 
         recognition.onresult = (e) => {
@@ -202,36 +201,71 @@
                 let result = e.results[i];
                 let transcript = result[0].transcript.trim();
 
-                // フィラー（えー、あの）をリアルタイム除去
+                // フィラー（えー、あの）をリアルタイム自動消去
                 const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                 transcript = transcript.replace(fillerRegex, "").trim();
 
                 if (transcript === "") continue;
 
                 if (result.isFinal) {
-                    // 同一インデックスの重複処理をメモリ上で速攻ブロック
+                    // 同一イベントインデックスの重複は即死ガード
                     if (processedIndices.has(i)) continue;
 
-                    // 【超厳格メモリダブりフィルター】
-                    // 1. 直前の確定文字と完全一致、または新しい文字が直前の文字を丸ごと含んでいる（雪だるま再送）ならスルー
-                    if (transcript === lastConfirmedText || (lastConfirmedText !== "" && transcript.startsWith(lastConfirmedText))) {
-                        // ただし、Androidが「これ自体が最終完全版の長い一文」として送ってきた場合は差分だけを救出
-                        if (transcript.length > lastConfirmedText.length) {
-                            let diff = transcript.substring(lastConfirmedText.length).trim();
-                            if (diff !== "") {
-                                appendFinalText(diff);
-                                processedIndices.add(i);
-                            }
+                    // 【究極のダブり総当たりスキャナー】
+                    // 新しく来た確定文字列が、過去の全履歴配列の「いずれかと完全一致」、
+                    // あるいは過去の文の中に「丸ごと含まれている（雪だるまの部分再送バグ）」なら絶対に弾く
+                    let isDuplicate = false;
+                    const cleanTranscript = transcript.replace(/[\s。、]/g, "");
+
+                    for (let hist of globalConfirmedHistory) {
+                        const cleanHist = hist.replace(/[\s。、]/g, "");
+                        // 過去の言葉と完全に同じ、または過去の長い文のパーツ（切り取り）であればダブりと断定
+                        if (cleanTranscript === cleanHist || cleanHist.includes(cleanTranscript)) {
+                            isDuplicate = true;
+                            break;
                         }
+                    }
+
+                    if (isDuplicate) {
+                        processedIndices.add(i); // 重複として処理済みにマークしてスルー
                         continue;
                     }
 
-                    // 完全に新しい発言として処理
-                    appendFinalText(transcript);
+                    // 過去の最新履歴をこの新しい文字が「拡張（内包）」している場合、その差分だけを切り出す
+                    if (globalConfirmedHistory.length > 0) {
+                        const lastHist = globalConfirmedHistory[globalConfirmedHistory.length - 1];
+                        if (transcript.startsWith(lastHist) && transcript !== lastHist) {
+                            transcript = transcript.substring(lastHist.length).trim();
+                        }
+                    }
+
+                    if (transcript === "") {
+                        processedIndices.add(i);
+                        continue;
+                    }
+
+                    // 完璧に審査を通った「完全な新しい一言」のみを、履歴と画面に書き込む
+                    globalConfirmedHistory.push(transcript);
                     processedIndices.add(i);
+
+                    const currentFinal = finalSpan.innerText.trim();
+                    let separator = currentFinal !== "" ? "\n" : "";
+                    if (!/[。？！?!]$/.test(transcript)) transcript += "。";
+
+                    finalSpan.innerText += separator + transcript;
+                    addLog(transcript, true);
+                    interimText = '';
                 } else {
-                    // 未確定（プレビュー）のダブり表示もメモリチェックで抑制
-                    if (!processedIndices.has(i) && (!lastConfirmedText || !lastConfirmedText.startsWith(transcript))) {
+                    // 未確定（プレビュー）も、すでに過去の確定履歴に存在する文字列なら画面に出さない
+                    let isInterimDup = false;
+                    const cleanInterim = transcript.replace(/[\s。、]/g, "");
+                    for (let hist of globalConfirmedHistory) {
+                        if (hist.replace(/[\s。、]/g, "").includes(cleanInterim)) {
+                            isInterimDup = true;
+                            break;
+                        }
+                    }
+                    if (!processedIndices.has(i) && !isInterimDup) {
                         interimText += transcript;
                     }
                 }
@@ -246,7 +280,7 @@
 
         recognition.onend = () => {
             recognition = null;
-            // 意図しない切断（無音タイムアウト等）のみ超高速自動復帰（stop()によるフリーズは起きない）
+            // 意図しない切断（無音時間切れなど）のみ高速自動復帰
             if (isActive) {
                 setTimeout(() => { if (isActive) startSpeechEngine(); }, 100);
             }
@@ -266,18 +300,6 @@
         }
     }
 
-    // 確定テキストを安全に画面へ追加する共通関数
-    function appendFinalText(text) {
-        lastConfirmedText = text; // メモリ履歴を更新
-        
-        const currentFinal = finalSpan.innerText.trim();
-        let separator = currentFinal !== "" ? "\n" : "";
-        if (!/[。？！?!]$/.test(text)) text += "。";
-
-        finalSpan.innerText += separator + text;
-        addLog(text, true);
-    }
-
     function stopSpeechEngine() {
         isActive = false;
         startBtn.disabled = false;
@@ -294,7 +316,7 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        lastConfirmedText = "";
+        globalConfirmedHistory = []; // 新規開始時にデータベースを完全クリア
         processedIndices.clear();
         updateStatus('connecting', "マイクを初期化中...");
         startSpeechEngine();
@@ -304,7 +326,7 @@
         stopSpeechEngine();
     };
 
-    // 設定変更（ログへの不要な出力は一切ありません）
+    // 設定変更（不要なログの出力は一切ありません）
     micSelect.onchange = () => {
         if (isActive && recognition) { try { recognition.stop(); } catch(e){} }
     };
@@ -347,7 +369,7 @@
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-            lastConfirmedText = "";
+            globalConfirmedHistory = [];
             processedIndices.clear();
         }
     };
