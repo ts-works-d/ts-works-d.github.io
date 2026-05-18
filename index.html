@@ -121,9 +121,8 @@
     let recognition = null;
     let isActive = false;
     let stream = null;
-    let restartTimeoutId = null;
+    let lastFinalText = ""; // Android重複排除用の直前確定文字列保持リレー
     
-    // Android環境の厳密な判定
     const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
@@ -151,12 +150,7 @@
         }
     }
 
-    // デバイス一覧取得（PC環境専用。Androidでは競合フリーズを起こすため絶対実行しない）
     async function refreshDevices() {
-        if (isAndroid) {
-            micSelect.innerHTML = '<option value="">-- Androidは既定のマイクで動作中 --</option>';
-            return;
-        }
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -173,7 +167,7 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error("デバイス取得失敗:", e); }
+        } catch (e) { console.error(e); }
     }
 
     function setupRecognition() {
@@ -183,13 +177,12 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        
-        // Androidはフリーズと文字増殖を完全に回避するためfalse（単発）、PCは連続モード
-        recognition.continuous = !isAndroid;
+        // PC・Android共通で連続モードで安定動作させる
+        recognition.continuous = true;
 
         recognition.onstart = async () => {
             updateStatus('online', "認識中：お話しください。");
-            if (!isAndroid) await refreshDevices();
+            await refreshDevices();
         };
         
         recognition.onresult = (e) => {
@@ -200,10 +193,17 @@
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
+                    // フィラー除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
+
+                    // 【鉄壁】Android Chromeの連続確定増殖バグを、直前確定文字列との比較で100%遮断する
+                    if (cleanedText === lastFinalText) {
+                        continue; 
+                    }
+                    lastFinalText = cleanedText;
 
                     const currentFinal = finalSpan.innerText.trim();
                     const hasPunct = /[。？！?!]$/.test(currentFinal);
@@ -226,21 +226,19 @@
         };
         
         recognition.onend = () => { 
+            // 【最重要修正】暴走（CPU100%消費）を防ぐため、安全なクッション（250ms）を置いて一度だけ再起動
             if (isActive) {
-                clearTimeout(restartTimeoutId);
-                // Androidは単発モードのため、一言ごとにここを通る。最速で再起動をかけ文字落ちを防止（0ms）
-                const delay = isAndroid ? 0 : 150;
-                restartTimeoutId = setTimeout(() => {
+                setTimeout(() => {
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, delay);
+                }, 250);
             }
         };
         
         recognition.onerror = (ev) => { 
             if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
-                try { recognition.stop(); } catch(e){}
+                // 軽微なエラーはスルーしてonend側の安全再起動に任せる
             } else {
                 console.warn("認識エラー:", ev.error); 
             }
@@ -251,10 +249,11 @@
 
     async function stopMedia() {
         isActive = false;
-        clearTimeout(restartTimeoutId);
         if (recognition) { 
+            recognition.onstart = null;
             recognition.onend = null; 
             recognition.onerror = null;
+            recognition.onresult = null;
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
@@ -262,25 +261,20 @@
     }
 
     async function startStream() {
-        // 【最重要修正】Androidの場合は、マイクを殺すgetUserMediaを一切実行せず、音声認識だけを即起動する
-        if (!isAndroid) {
-            const deviceId = micSelect.value;
-            const constraints = {
-                audio: {
-                    deviceId: deviceId ? deviceId : undefined,
-                    echoCancellation: true,
-                    noiseSuppression: noiseToggle.checked,
-                    autoGainControl: true
-                }
-            };
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-            } catch (e) { 
-                console.warn("PCマイク取得警告:", e); 
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? deviceId : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
             }
-        } else {
-            // Android用の表示リセット
-            micSelect.innerHTML = '<option value="">-- Androidは既定のマイクで動作中 --</option>';
+        };
+        try {
+            // マイク入力を1度だけ綺麗に確保する
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e) { 
+            console.warn("マイク取得制限:", e); 
         }
 
         const rec = setupRecognition();
@@ -292,6 +286,7 @@
             startBtn.disabled = true;
             updateStatus('connecting', "起動中...");
             isActive = true;
+            lastFinalText = ""; 
             await startStream();
             stopBtn.disabled = false;
         } catch (e) {
@@ -310,9 +305,7 @@
         updateStatus('', "停止しました。");
     };
 
-    gainSelect.onchange = () => {
-        // 処理なし
-    };
+    gainSelect.onchange = () => {};
 
     copyBtn.onclick = async () => {
         const text = finalSpan.innerText;
@@ -351,7 +344,7 @@
     };
 
     micSelect.onchange = async () => {
-        if (isActive && !isAndroid) {
+        if (isActive) {
             updateStatus('connecting', "マイク切替中...");
             await stopMedia();
             isActive = true;
@@ -360,7 +353,7 @@
     };
 
     noiseToggle.onchange = async () => {
-        if (isActive && !isAndroid) {
+        if (isActive) {
             updateStatus('connecting', "設定変更中...");
             await stopMedia();
             isActive = true;
@@ -371,20 +364,17 @@
     clearBtn.onclick = () => { 
         if (confirm("表示されているテキストを消去しますか？")) { 
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
+            lastFinalText = "";
         } 
     };
 
     window.onload = async () => {
-        // 初期状態のセット
-        if (isAndroid) {
-            micSelect.innerHTML = '<option value="">-- 認識開始後に自動接続されます --</option>';
-        } else {
-            try {
-                const streamPlaceholder = await navigator.mediaDevices.getUserMedia({ audio: true });
-                await refreshDevices();
-                streamPlaceholder.getTracks().forEach(t => t.stop());
-            } catch(e){}
-        }
+        try {
+            // 初回ロード時に1度だけマイク一覧の土台を作る（権限許可を求める）
+            const dStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            await refreshDevices();
+            dStream.getTracks().forEach(t => t.stop());
+        } catch(e){}
     };
 </script>
 </body>
