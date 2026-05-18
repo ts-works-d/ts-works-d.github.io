@@ -148,6 +148,50 @@
         }
     }
 
+    // Android特有の「重複ダブり」「文字落ち」をミリ単位で判定・相殺するロジック
+    function eliminateDuplicateText(currentFullText, newText) {
+        if (!currentFullText || !newText) return newText;
+
+        // 比較用に記号や改行を除去したクリーンな文字列を作成
+        const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
+        const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
+
+        // 新しい文章が既に含まれている場合は完全にダブりなので追加しない
+        if (cleanCurrent.includes(cleanNew)) {
+            return "";
+        }
+
+        // お尻の部分と頭の部分の重なり（最長一致）を調査
+        const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
+        let overlapLength = 0;
+
+        for (let i = 1; i <= maxCheckLength; i++) {
+            const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
+            const newHead = cleanNew.substring(0, i);
+            if (currentTail === newHead) {
+                overlapLength = i;
+            }
+        }
+
+        // 重なりが見つかった場合、元の記号を含んだ形式のnewTextから該当文字数分を正確にカット
+        if (overlapLength > 0) {
+            let currentMatchLen = 0;
+            let cutIndex = 0;
+            for (let j = 0; j < newText.length; j++) {
+                if (!/[。？！?!\s\n]/.test(newText[j])) {
+                    currentMatchLen++;
+                }
+                if (currentMatchLen > overlapLength) {
+                    cutIndex = j;
+                    break;
+                }
+                cutIndex = j + 1;
+            }
+            return newText.substring(cutIndex);
+        }
+        return newText;
+    }
+
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -190,9 +234,14 @@
                     
                     if (cleanedText === "") continue;
 
-                    const currentFinal = finalSpan.innerText.trim();
-                    const hasPunct = /[。？！?!]$/.test(currentFinal);
-                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    let currentFinal = finalSpan.innerText;
+                    
+                    // Android重複防止フィルタの適用（ダブりと文字落ちを同時に防ぐ）
+                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
+                    if (cleanedText === "") continue;
+
+                    const hasPunct = /[。？！?!]$/.test(currentFinal.trim());
+                    let separator = currentFinal.trim() !== "" ? (hasPunct ? "\n" : "。\n") : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
@@ -255,20 +304,18 @@
         };
 
         try {
-            // 【最重要】Androidでマイクの使用許可（ロック解除）を得るために一度だけストリームを取得
+            // Androidでの権限ブロック回避とデバイス一覧取得のために一瞬だけマイクを起動
             stream = await navigator.mediaDevices.getUserMedia(constraints);
             await refreshDevices();
             
-            // 【競合回避】デバイス一覧を取得できたら、音声認識が動く前に一度マイクストリームのトラックを完全に停止してブラウザに返却する
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
                 stream = null;
             }
         } catch (e) {
-            console.warn("マイク権限の取得またはデバイス一覧読み込みをスキップします", e);
+            console.warn("マイク設定をスキップします", e);
         }
 
-        // クリーンになった状態で音声認識エンジンをスタート
         const rec = setupRecognition();
         if (rec) rec.start();
     }
