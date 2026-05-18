@@ -123,6 +123,7 @@
     let stream = null;
     let restartTimeoutId = null;
     
+    // Android環境の厳密な判定
     const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
@@ -178,46 +179,68 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true;
+        
+        // 【最重要】Androidでの内部エンジンスタックを回避するため、Androidのみ連続認識を強制OFF。PCはON。
+        recognition.continuous = !isAndroid;
 
         recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
         
         recognition.onresult = (e) => {
             let interimText = '';
             
-            for (let i = e.resultIndex; i < e.results.length; i++) {
-                let result = e.results[i];
+            if (isAndroid) {
+                // ------ 【Android専用：超高速・単発バッファ処理】 ------
+                // continuousをOFFにしたため、e.resultsには常に今話している1文しか入ってこない
+                const lastResultIndex = e.results.length - 1;
+                const result = e.results[lastResultIndex];
+                const transcript = result[0].transcript;
+
                 if (result.isFinal) {
-                    let cleanedText = result[0].transcript.trim();
-                    
-                    // フィラーの削除
-                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                    cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-                    
-                    if (cleanedText === "") continue;
+                    let cleanedText = transcript.trim();
+                    if (cleanedText !== "") {
+                        const currentFinal = finalSpan.innerText.trim();
+                        const hasPunct = /[。？！?!]$/.test(currentFinal);
+                        let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    // 【Android多重表示対策】すでに同じ文章が全体テキスト内に存在している場合は処理をスキップ
-                    const currentFinalTotal = finalSpan.innerText;
-                    if (currentFinalTotal.includes(cleanedText)) {
-                        continue; 
+                        finalSpan.innerText += separator + cleanedText;
+                        addLog(cleanedText, true); // ログに「確定」を1発だけ綺麗に表示
+                        interimSpan.innerText = "";
                     }
-
-                    const currentFinalTrimmed = currentFinalTotal.trim();
-                    const hasPunct = /[。？！?!]$/.test(currentFinalTrimmed);
-                    let separator = currentFinalTrimmed !== "" ? (hasPunct ? "\n" : "。\n") : "";
-                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-
-                    finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true);
                 } else {
-                    interimText += result[0].transcript;
+                    // リアルタイムに暫定ストリーム（グレー文字）とログを吐き出す
+                    interimText = transcript;
+                    interimSpan.innerText = interimText;
+                    if (interimText.trim() !== "") {
+                        addLog(interimText, false); // 認識中のログを正しく流す
+                    }
                 }
-            }
-            
-            // 認識中（暫定）ストリームの表示
-            interimSpan.innerText = interimText;
-            if (interimText.trim() !== "") {
-                addLog(interimText, false);
+            } else {
+                // ------ 【PC専用：従来通りの高スループット連続処理】 ------
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    let result = e.results[i];
+                    if (result.isFinal) {
+                        let cleanedText = result[0].transcript.trim();
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                        
+                        if (cleanedText === "") continue;
+
+                        const currentFinal = finalSpan.innerText.trim();
+                        const hasPunct = /[。？！?!]$/.test(currentFinal);
+                        let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+
+                        finalSpan.innerText += separator + cleanedText;
+                        addLog(cleanedText, true);
+                    } else {
+                        interimText += result[0].transcript;
+                    }
+                }
+                interimSpan.innerText = interimText;
+                if (interimText.trim() !== "") {
+                    addLog(interimText, false);
+                }
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
@@ -225,12 +248,15 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
-                // 【PC文字落ち対策】安全なクッション時間（150ms）を挟んで再起動
+                // 【再起動ロジックの完全分離】
+                // Androidは1文ごとに止まるので、ラグを一切挟まず「0ミリ秒」で超即時再起動させる
+                // PCは文字落ちを防ぐため安全に150ミリ秒待つ
+                const delay = isAndroid ? 0 : 150;
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 150);
+                }, delay);
             }
         };
         
@@ -301,9 +327,8 @@
         updateStatus('', "停止しました。");
     };
 
-    // 感度変更時のログ表示を完全削除
     gainSelect.onchange = () => {
-        // 処理なし（ログ出力を廃止）
+        // 処理なし（ログ出力廃止）
     };
 
     copyBtn.onclick = async () => {
