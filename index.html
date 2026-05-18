@@ -18,8 +18,8 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; display: none; }
-        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; display: none; }
+        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
+        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
@@ -55,8 +55,20 @@
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            <select id="mic-select"></select>
-            <div class="setting-box"><input type="checkbox" id="noise-toggle" checked></div>
+            
+            <select id="mic-select">
+                <option value="">-- [認識開始]後にマイクを選択できます --</option>
+            </select>
+            
+            <div class="setting-box">
+                <div class="setting-label">
+                    <span>ノイズ軽減（要再起動）</span>
+                    <label class="switch">
+                        <input type="checkbox" id="noise-toggle" checked>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            </div>
             
             <div class="controls">
                 <button id="start">認識開始</button>
@@ -78,11 +90,13 @@
 </div>
 
 <script>
+    const micSelect = document.getElementById('mic-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
     const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
+    const noiseToggle = document.getElementById('noise-toggle');
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
@@ -93,6 +107,7 @@
 
     let recognition = null;
     let isActive = false;
+    let stream = null;
     let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
@@ -120,21 +135,17 @@
         }
     }
 
-    // 【超強力版】重複排除ロジック
-    // 既存テキスト全体の末尾と、新テキストの先頭に「1文字以上の重なり」があれば最大一致する部分を削る
+    // 文字レベルでの最高精度・重複カットロジック
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
-        // 記号や改行などを除去して純粋な文字列として比較用データを準備
         const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
         const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
 
-        // 新しいテキストが既存テキストに完全に含まれている場合は空文字を返す（完全重複スキップ）
         if (cleanCurrent.includes(cleanNew)) {
             return "";
         }
 
-        // 後方から何文字被っているかを全探索 (最大で新テキスト全体の長さまで)
         const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
         let overlapLength = 0;
 
@@ -142,15 +153,13 @@
             const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
             const newHead = cleanNew.substring(0, i);
             if (currentTail === newHead) {
-                overlapLength = i; // 被っている「きれいな文字数」を記録
+                overlapLength = i;
             }
         }
 
-        // 被りが見つかった場合、新テキストの先頭側から該当する文字の部分を物理的に削る
         if (overlapLength > 0) {
             let currentMatchLen = 0;
             let cutIndex = 0;
-            // 新テキストのオリジナル文字列（記号込み）を走査し、クリーン文字数分に相当するインデックスを探す
             for (let j = 0; j < newText.length; j++) {
                 if (!/[。？！?!\s\n]/.test(newText[j])) {
                     currentMatchLen++;
@@ -163,8 +172,35 @@
             }
             return newText.substring(cutIndex);
         }
-
         return newText;
+    }
+
+    async function refreshDevices() {
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioInputs = devices.filter(d => d.kind === 'audioinput');
+            const currentVal = micSelect.value;
+            micSelect.innerHTML = '';
+            
+            if (audioInputs.length === 0 || audioInputs[0].label === "") {
+                const opt = document.createElement('option');
+                opt.value = "";
+                opt.text = "既定のマイク（認識開始後に選択可能）";
+                micSelect.appendChild(opt);
+                return;
+            }
+
+            audioInputs.forEach((d, i) => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId; 
+                opt.text = d.label || `マイク ${i + 1}`;
+                micSelect.appendChild(opt);
+            });
+            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
+                micSelect.value = currentVal;
+            }
+        } catch (e) { console.error(e); }
     }
 
     function setupRecognition() {
@@ -189,23 +225,17 @@
                 let transcript = e.results[i][0].transcript;
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
-                    
-                    // フィラー（えーっと、あの等）の除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    // 画面の確定文全体を取得して、新しい文との被りをチェック
                     let currentFinal = finalSpan.innerText;
                     
-                    // 【強化した重複排除処理を実行】
-                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText);
-                    cleanedText = cleanedText.trim();
-                    
+                    // Android重複完全シャットアウト処理
+                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
                     if (cleanedText === "") continue;
 
-                    // 文末の処理
                     const hasPunct = /[。？！?!]$/.test(currentFinal.trim());
                     let separator = currentFinal.trim() !== "" ? (hasPunct ? "\n" : "。\n") : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
@@ -228,11 +258,7 @@
                 clearTimeout(restartTimeoutId);
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
-                        try { 
-                            recognition.start(); 
-                        } catch(e) {
-                            console.log("再起動試行中...");
-                        }
+                        try { recognition.start(); } catch(e) {}
                     }
                 }, 400);
             } 
@@ -251,7 +277,7 @@
         return recognition;
     }
 
-    function stopMedia() {
+    async function stopMedia() {
         isActive = false;
         clearTimeout(restartTimeoutId);
         
@@ -263,32 +289,53 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
+        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
         startBtn.disabled = false;
         stopBtn.disabled = true;
     }
 
-    startBtn.onclick = () => {
+    async function startStream() {
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+
+        // Android等での競合を防ぐため安全に getUserMedia をハンドリング
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                await refreshDevices();
+            } catch (mediaError) {
+                console.warn("詳細マイクの取得に失敗したため既定のマイクで起動します");
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
+        }
+
+        const rec = setupRecognition();
+        if (rec) rec.start();
+    }
+
+    startBtn.onclick = async () => {
         try {
             startBtn.disabled = true;
             updateStatus('connecting', "初期化中...");
             isActive = true;
-            
-            const rec = setupRecognition();
-            if (rec) {
-                rec.start();
-                stopBtn.disabled = false;
-            } else {
-                startBtn.disabled = false;
-            }
+            await startStream();
+            stopBtn.disabled = false;
         } catch (e) {
             console.error(e);
-            updateStatus('error', "起動失敗。マイクの権限を確認してください。");
-            stopMedia();
+            updateStatus('error', "起動失敗。設定を確認してください。");
+            await stopMedia();
         }
     };
 
-    stopBtn.onclick = () => {
-        stopMedia();
+    stopBtn.onclick = async () => {
+        await stopMedia();
         updateStatus('', "停止しました。");
     };
 
@@ -328,10 +375,32 @@
         URL.revokeObjectURL(url);
     };
 
+    micSelect.onchange = async () => {
+        if (isActive) {
+            updateStatus('connecting', "デバイス切り替え...");
+            await stopMedia();
+            isActive = true;
+            await startStream();
+        }
+    };
+
+    noiseToggle.onchange = async () => {
+        if (isActive) {
+            updateStatus('connecting', "ノイズ設定反映中...");
+            await stopMedia();
+            isActive = true;
+            await startStream();
+        }
+    };
+
     clearBtn.onclick = () => { 
         if (confirm("表示されているテキストを消去しますか？")) { 
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
         } 
+    };
+
+    window.onload = () => {
+        refreshDevices().catch(e => console.log("初期化スキップ"));
     };
 </script>
 </body>
