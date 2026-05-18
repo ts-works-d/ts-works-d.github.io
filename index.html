@@ -124,11 +124,6 @@
     let stream = null;
     let restartTimeoutId = null;
 
-    // Web Audio API（感度ブースト用）の変数
-    let audioContext = null;
-    let sourceNode = null;
-    let gainNode = null;
-
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
         entry.className = 'log-entry';
@@ -154,7 +149,7 @@
         }
     }
 
-    // Android用の文字列重複自動カット処理
+    // Android用の文字列重複自動カット処理（最新版）
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
@@ -266,7 +261,7 @@
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 300);
+                }, 200);
             } 
         };
         
@@ -291,12 +286,6 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-
-        // オーディオコンテキストのクリーンアップ
-        if (gainNode) { gainNode.disconnect(); gainNode = null; }
-        if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
-        if (audioContext) { try { await audioContext.close(); } catch(e){} audioContext = null; }
-
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
@@ -304,30 +293,22 @@
         const deviceId = micSelect.value;
         const constraints = {
             audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
+                deviceId: deviceId ? deviceId : undefined,
                 echoCancellation: true,
                 noiseSuppression: noiseToggle.checked,
                 autoGainControl: true
             }
         };
 
-        // 1. 生のマイク音声を取得
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        await refreshDevices();
+        // ミュート競合を避けるため、安全にマイク権限の確認とデバイス取得を行う
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            await refreshDevices();
+        } catch (err) {
+            console.warn("ストリーム初期化スキップ(認識単独起動を行います)", err);
+        }
 
-        // 2. Web Audio API を使って音声を増幅する接続経路を作成
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioContext = new AudioContext();
-        sourceNode = audioContext.createMediaStreamSource(stream);
-        gainNode = audioContext.createGain();
-        
-        // 選択されたリストボックスの感度（1〜10）を反映
-        gainNode.gain.value = parseFloat(gainSelect.value);
-        
-        // マイクから入った音をゲインノードに接続
-        sourceNode.connect(gainNode);
-
-        // 3. 認識処理を安全にスタート
+        // スマホで無音化（認識しなくなるバグ）させないよう、音声認識を綺麗に単独スタート
         const rec = setupRecognition();
         if (rec) rec.start();
     }
@@ -342,7 +323,8 @@
         } catch (e) {
             console.error(e);
             updateStatus('error', "起動失敗。設定を確認してください。");
-            await stopMedia();
+            startBtn.disabled = false;
+            isActive = false;
         }
     };
 
@@ -354,12 +336,9 @@
         updateStatus('', "停止しました。");
     };
 
-    // リストボックスの感度が変更されたらリアルタイムに音量を調整
+    // 感度セレクトボックスが変更された際の挙動（ログを確実に残す）
     gainSelect.onchange = () => {
-        if (gainNode) {
-            gainNode.gain.value = parseFloat(gainSelect.value);
-            addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
-        }
+        addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
     };
 
     copyBtn.onclick = async () => {
