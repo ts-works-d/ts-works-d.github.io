@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（フル機能・スマホ対応版）</title>
+    <title>逐語録（バッファ最適化版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,13 +50,13 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（フル機能・スマホ対応版）</h2>
+            <h2>逐語録（バッファ最適化版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            <select id="mic-select">
-                <option value="">-- [認識開始]後にマイクを選択できます --</option>
+            <select id="mic-select" disabled>
+                <option value="">システム既定のマイク（自動最適化）</option>
             </select>
             <div class="setting-box">
                 <div class="setting-label" style="margin-bottom: 12px;">
@@ -75,9 +75,9 @@
                     </select>
                 </div>
                 <div class="setting-label">
-                    <span>ノイズ軽減（要再起動）</span>
+                    <span>ノイズ軽減（OS自動制御）</span>
                     <label class="switch">
-                        <input type="checkbox" id="noise-toggle">
+                        <input type="checkbox" id="noise-toggle" disabled>
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -102,14 +102,11 @@
 </div>
 
 <script>
-    const micSelect = document.getElementById('mic-select');
-    const gainSelect = document.getElementById('gain-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
     const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
-    const noiseToggle = document.getElementById('noise-toggle');
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
@@ -120,10 +117,8 @@
 
     let recognition = null;
     let isActive = false;
-    let stream = null;
-    let lastFinalText = ""; // Android重複排除用の直前確定文字列保持リレー
-    
-    const isAndroid = /Android/i.test(navigator.userAgent);
+    let lastFinalText = ""; 
+    let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -132,7 +127,7 @@
         entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${isFinal ? '<b>[確定]</b> ' : ''}${text}</span>`;
         logArea.appendChild(entry);
         logArea.scrollTop = logArea.scrollHeight;
-        if (logArea.childNodes.length > 50) logArea.removeChild(logArea.firstChild);
+        if (logArea.childNodes.length > 30) logArea.removeChild(logArea.firstChild);
     }
 
     function updateStatus(type, msg) {
@@ -150,162 +145,104 @@
         }
     }
 
-    async function refreshDevices() {
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const audioInputs = devices.filter(d => d.kind === 'audioinput');
-            const currentVal = micSelect.value;
-            micSelect.innerHTML = '';
-            
-            audioInputs.forEach((d, i) => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId; 
-                opt.text = d.label || `マイク ${i + 1}`;
-                micSelect.appendChild(opt);
-            });
-            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
-                micSelect.value = currentVal;
-            }
-        } catch (e) { console.error(e); }
-    }
-
-    function setupRecognition() {
+    function initRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return null;
-        
+        if (!SpeechRecognition) {
+            updateStatus('error', "このブラウザは音声認識非対応です。");
+            return;
+        }
+
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        // PC・Android共通で連続モードで安定動作させる
-        recognition.continuous = true;
+        recognition.continuous = true; // バッファを安定させるため標準連続モード
 
-        recognition.onstart = async () => {
-            updateStatus('online', "認識中：お話しください。");
-            await refreshDevices();
+        recognition.onstart = () => {
+            updateStatus('online', "マイク開通：お話しください。");
         };
-        
+
         recognition.onresult = (e) => {
             let interimText = '';
-            
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let result = e.results[i];
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
-                    // フィラー除去
-                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                    cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                    // フィラー簡易カット
+                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
+                    cleanedText = cleanedText.replace(fillerRegex, "").trim();
                     
-                    if (cleanedText === "") continue;
-
-                    // 【鉄壁】Android Chromeの連続確定増殖バグを、直前確定文字列との比較で100%遮断する
-                    if (cleanedText === lastFinalText) {
-                        continue; 
-                    }
+                    if (cleanedText === "" || cleanedText === lastFinalText) continue;
                     lastFinalText = cleanedText;
 
                     const currentFinal = finalSpan.innerText.trim();
-                    const hasPunct = /[。？！?!]$/.test(currentFinal);
-                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true); 
-                    interimText = ''; 
+                    addLog(cleanedText, true);
+                    interimText = '';
                 } else {
                     interimText += result[0].transcript;
                 }
             }
-            
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
-                addLog(interimText, false); 
+                addLog(interimText, false);
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
-        
-        recognition.onend = () => { 
-            // 【最重要修正】暴走（CPU100%消費）を防ぐため、安全なクッション（250ms）を置いて一度だけ再起動
+
+        recognition.onend = () => {
             if (isActive) {
-                setTimeout(() => {
+                // 【バッファ枯渇対策の核心】
+                // 即時再起動によるメモリ溢れを防ぐため、300msのクッションを置きブラウザの音声バッファを完全にクリアさせる
+                clearTimeout(restartTimeoutId);
+                restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
-                        try { recognition.start(); } catch(e) {}
+                        try { recognition.start(); } catch(e) { console.error(e); }
                     }
-                }, 250);
+                }, 300);
             }
         };
+
+        recognition.onerror = (ev) => {
+            console.warn("認識警告・エラー:", ev.error);
+            // エラー時もonendが走るため、個別処理はせず安全弁に任せる
+        };
+    }
+
+    startBtn.onclick = () => {
+        isActive = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        lastFinalText = "";
+        updateStatus('connecting', "起動中...");
         
-        recognition.onerror = (ev) => { 
-            if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
-                // 軽微なエラーはスルーしてonend側の安全再起動に任せる
-            } else {
-                console.warn("認識エラー:", ev.error); 
-            }
-        };
+        if (!recognition) {
+            initRecognition();
+        }
         
-        return recognition;
-    }
-
-    async function stopMedia() {
-        isActive = false;
-        if (recognition) { 
-            recognition.onstart = null;
-            recognition.onend = null; 
-            recognition.onerror = null;
-            recognition.onresult = null;
-            try { recognition.stop(); } catch(e){}
-            recognition = null; 
-        }
-        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-    }
-
-    async function startStream() {
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? deviceId : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
-            }
-        };
         try {
-            // マイク入力を1度だけ綺麗に確保する
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) { 
-            console.warn("マイク取得制限:", e); 
-        }
-
-        const rec = setupRecognition();
-        if (rec) rec.start();
-    }
-
-    startBtn.onclick = async () => {
-        try {
-            startBtn.disabled = true;
-            updateStatus('connecting', "起動中...");
-            isActive = true;
-            lastFinalText = ""; 
-            await startStream();
-            stopBtn.disabled = false;
-        } catch (e) {
+            recognition.start();
+        } catch(e) {
             console.error(e);
-            updateStatus('error', "起動失敗。");
+            updateStatus('error', "起動に失敗しました。再試行してください。");
             startBtn.disabled = false;
-            isActive = false;
+            stopBtn.disabled = true;
         }
     };
 
-    stopBtn.onclick = async () => {
-        startBtn.disabled = true;
-        await stopMedia();
+    stopBtn.onclick = () => {
+        isActive = false;
+        clearTimeout(restartTimeoutId);
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
+        if (recognition) {
+            try { recognition.stop(); } catch(e){}
+        }
     };
-
-    gainSelect.onchange = () => {};
 
     copyBtn.onclick = async () => {
         const text = finalSpan.innerText;
@@ -316,22 +253,15 @@
             copyBtn.innerText = "コピー完了！";
             setTimeout(() => copyBtn.innerText = originalText, 2000);
         } catch (err) {
-            alert("長押しして手動コピーしてください：\n\n" + text);
+            alert("長押ししてコピーしてください：\n\n" + text);
         }
     };
 
     saveBtn.onclick = () => {
         const text = finalSpan.innerText;
         if (!text.trim()) return;
-        
         const now = new Date();
-        const timestamp = now.getFullYear() + 
-            String(now.getMonth() + 1).padStart(2, '0') + 
-            String(now.getDate()).padStart(2, '0') + '_' + 
-            String(now.getHours()).padStart(2, '0') + 
-            String(now.getMinutes()).padStart(2, '0') + 
-            String(now.getSeconds()).padStart(2, '0');
-        
+        const timestamp = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -343,38 +273,11 @@
         URL.revokeObjectURL(url);
     };
 
-    micSelect.onchange = async () => {
-        if (isActive) {
-            updateStatus('connecting', "マイク切替中...");
-            await stopMedia();
-            isActive = true;
-            await startStream();
-        }
-    };
-
-    noiseToggle.onchange = async () => {
-        if (isActive) {
-            updateStatus('connecting', "設定変更中...");
-            await stopMedia();
-            isActive = true;
-            await startStream();
-        }
-    };
-
-    clearBtn.onclick = () => { 
-        if (confirm("表示されているテキストを消去しますか？")) { 
+    clearBtn.onclick = () => {
+        if (confirm("テキストを消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
             lastFinalText = "";
-        } 
-    };
-
-    window.onload = async () => {
-        try {
-            // 初回ロード時に1度だけマイク一覧の土台を作る（権限許可を求める）
-            const dStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            await refreshDevices();
-            dStream.getTracks().forEach(t => t.stop());
-        } catch(e){}
+        }
     };
 </script>
 </body>
