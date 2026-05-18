@@ -113,6 +113,7 @@
     let isActive = false;
     let restartTimer = null;
     let configTimeout = null;
+    let currentStream = null; // マイク切り替え用のストリーム保持
 
     function updateStatus(type, msg) {
         statusDisp.innerText = msg;
@@ -136,7 +137,7 @@
         }
     }
 
-    // 利用可能なマイク一覧の取得（マイク線を掴みっぱなしにしない安全設計）
+    // デバイス一覧の取得
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -159,8 +160,8 @@
         }
     }
 
-    // indexss.htmlベース：Android・PCの双方で確実に音声を拾い、バッファ詰まりを起こさない完全版ロジック
-    function startSpeechEngine() {
+    // 音声認識のメイン処理
+    async function startSpeechEngine() {
         if (!isActive) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -169,18 +170,31 @@
             return;
         }
 
+        // 既存の古いハードウェアストリームを完全に停止
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
+
         try {
+            // 選択されたマイクデバイスを明示的にブラウザに要求（切り替えを正常動作させる核心処理）
+            const constraints = {
+                audio: {
+                    echoCancellation: noiseToggle.checked,
+                    noiseSuppression: noiseToggle.checked
+                }
+            };
+            if (micSelect.value) {
+                constraints.audio.deviceId = { exact: micSelect.value };
+            }
+            
+            // ストリームを取得してハードウェアレベルでマイクを切り替える
+            currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+
             recognition = new SpeechRecognition();
             recognition.lang = 'ja-JP';
-            recognition.interimResults = true; // リアルタイム認識
-            recognition.continuous = true;     // 連続認識
-
-            // 【ノイズ軽減スイッチの連動】
-            // ブラウザ標準の認識プロパティをサポートしている環境ではノイズカット等を指定
-            if (recognition.audioTrack) {
-                recognition.audioTrack.echoCancellation = noiseToggle.checked;
-                recognition.audioTrack.noiseSuppression = noiseToggle.checked;
-            }
+            recognition.interimResults = true; 
+            recognition.continuous = true;     
 
             recognition.onstart = () => {
                 updateStatus('online', "認識中：声をしっかり拾っています。お話しください。");
@@ -196,7 +210,7 @@
                     if (e.results[i].isFinal) {
                         let cleanedText = transcript.trim();
 
-                        // 【フィラー（えー、あの等）削除トグルの連携】
+                        // フィラー削除トグルの連携
                         if (fillerToggle.checked) {
                             const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                             cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
@@ -204,7 +218,7 @@
                         
                         if (cleanedText === "") continue;
 
-                        // indexss.html 由来の超高速結合処理（配列やバッファを使わないため雪だるま式増殖が起きない）
+                        // indexss.html 由来の高速結合
                         const currentFinal = finalSpan.textContent.trim();
                         let separator = currentFinal !== "" ? "。\n" : "";
                         if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
@@ -220,7 +234,7 @@
                 outputBox.scrollTop = outputBox.scrollHeight;
             };
 
-            // Android等で無音時に切断された場合の自動リスタート
+            // 自動再接続
             recognition.onend = () => {
                 recognition = null;
                 if (isActive) {
@@ -239,7 +253,6 @@
                     updateStatus('error', "エラー: マイクの使用権限がありません。");
                     stopSpeechEngine();
                 } else {
-                    // その他のエラー時はabortをかけて強制復帰へ回す
                     try { recognition.abort(); } catch(e){}
                 }
             };
@@ -247,7 +260,8 @@
             recognition.start();
 
         } catch(e) {
-            updateStatus('error', "エンジンの起動に失敗しました: " + e.message);
+            console.error("起動エラー:", e);
+            updateStatus('error', "マイクへのアクセスに失敗しました。再試行してください。");
             recognition = null;
         }
     }
@@ -263,10 +277,14 @@
             try { recognition.stop(); } catch(e){}
             recognition = null;
         }
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop());
+            currentStream = null;
+        }
         interimSpan.textContent = "";
     }
 
-    // 設定パネル（フィラー・ノイズ軽減・倍率・マイク）を変更した際に、安全に再起動する処理
+    // デバイスやトグル設定が切り替わったときに確実に追従させる処理
     function handleConfigChange() {
         if (!isActive) return;
         stopSpeechEngine(); 
@@ -276,10 +294,10 @@
         clearTimeout(configTimeout);
         configTimeout = setTimeout(() => {
             if (isActive) {
-                updateStatus('connecting', "設定を反映中...");
+                updateStatus('connecting', "デバイス/設定を切り替え中...");
                 startSpeechEngine();
             }
-        }, 300);
+        }, 400); // デバイスの物理的な解放時間を待つための微小なディレイ
     }
 
     startBtn.onclick = () => {
@@ -294,7 +312,7 @@
         stopSpeechEngine(); 
     };
 
-    // 画面上の設定トグルの挙動はすべてそのまま維持・バインド
+    // 切り替えイベントを完全にバインド
     micSelect.onchange = handleConfigChange;
     gainSelect.onchange = handleConfigChange; 
     noiseToggle.onchange = handleConfigChange;
@@ -336,11 +354,10 @@
         }
     };
 
-    // ページロード時：マイク線を掴みっぱなしにせず、デバイス一覧だけを安全に書き出すよう修正
+    // 初回読み込み時にデバイス一覧をセットアップ
     window.onload = async () => {
         try {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                // 一瞬だけマイク許可を求めて、リストを取得したらすぐさま完全にマイク線を解放する
                 const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 await refreshDevices();
                 initStream.getTracks().forEach(track => track.stop()); 
