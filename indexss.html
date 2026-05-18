@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>逐語録（スマホ専用・確実動作版）</title>
+    <style>
+        :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --secondary: #6c757d; --info: #17a2b8; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 15px; background: #f4f7f9; color: #333; max-width: 600px; margin: auto; }
+        .card { background: #fff; padding: 20px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); box-sizing: border-box; }
+        h2 { margin: 0 0 15px; font-size: 1.2em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .status-area { font-size: 0.9em; text-align: center; margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; color: #856404; font-weight: bold; }
+        .controls { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        button { flex: 1; min-width: 80px; padding: 14px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; color: white; transition: 0.2s; }
+        #start { background: var(--primary); }
+        #stop { background: var(--danger); }
+        #copy { background: var(--info); }
+        #clear { background: var(--secondary); }
+        button:disabled { background: #ccc !important; opacity: 0.6; }
+        #output-box { width: 100%; height: 400px; padding: 15px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
+        #final-span { color: #222; white-space: pre-wrap; }
+        #interim-span { color: #999; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>逐語録（スマホ対応版）</h2>
+    <div class="status-area" id="status-display">「認識開始」を押してください</div>
+    
+    <div class="controls">
+        <button id="start">認識開始</button>
+        <button id="stop" disabled>停止</button>
+        <button id="copy">コピー</button>
+        <button id="clear">クリア</button>
+    </div>
+
+    <div id="output-box">
+        <span id="final-span"></span>
+        <span id="interim-span"></span>
+    </div>
+</div>
+
+<script>
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const copyBtn = document.getElementById('copy');
+    const clearBtn = document.getElementById('clear');
+    const finalSpan = document.getElementById('final-span');
+    const interimSpan = document.getElementById('interim-span');
+    const outputBox = document.getElementById('output-box');
+    const statusDisp = document.getElementById('status-display');
+
+    let recognition = null;
+    let isActive = false;
+    let restartTimeoutId = null;
+
+    function updateStatus(state, msg) {
+        statusDisp.innerText = msg;
+        if (state === 'online') {
+            statusDisp.style.background = "#d4edda";
+            statusDisp.style.color = "#155724";
+        } else if (state === 'offline') {
+            statusDisp.style.background = "#e2e3e5";
+            statusDisp.style.color = "#383d41";
+        } else {
+            statusDisp.style.background = "#fff3cd";
+            statusDisp.style.color = "#856404";
+        }
+    }
+
+    function initRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            updateStatus('offline', "ブラウザが音声認識に対応していません");
+            return;
+        }
+
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ja-JP';
+        recognition.interimResults = true;
+        recognition.continuous = true;
+
+        recognition.onstart = () => {
+            updateStatus('online', "認識中：お話しください");
+        };
+
+        recognition.onresult = (e) => {
+            let interimText = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                let transcript = e.results[i][0].transcript;
+                if (e.results[i].isFinal) {
+                    let cleanedText = transcript.trim();
+                    
+                    // フィラー（えー、あの）の除去
+                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                    cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                    
+                    if (cleanedText === "") continue;
+
+                    const currentFinal = finalSpan.innerText.trim();
+                    let separator = currentFinal !== "" ? "。\n" : "";
+                    if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
+                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+
+                    finalSpan.innerText += separator + cleanedText;
+                } else {
+                    interimText += transcript;
+                }
+            }
+            interimSpan.innerText = interimText;
+            outputBox.scrollTop = outputBox.scrollHeight;
+        };
+
+        // スマホ特有の自動切断に対する再起動
+        recognition.onend = () => {
+            if (isActive) {
+                clearTimeout(restartTimeoutId);
+                restartTimeoutId = setTimeout(() => {
+                    if (isActive && recognition) {
+                        try { recognition.start(); } catch(e) {}
+                    }
+                }, 200);
+            }
+        };
+
+        // 無音エラーなどでループが死ぬのを防ぐ
+        recognition.onerror = (ev) => {
+            if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
+                try { recognition.stop(); } catch(e){}
+            } else {
+                console.warn("認識エラー:", ev.error);
+            }
+        };
+    }
+
+    startBtn.onclick = () => {
+        isActive = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        updateStatus('', "起動中...");
+
+        if (!recognition) {
+            initRecognition();
+        }
+
+        if (recognition) {
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error(e);
+                updateStatus('offline', "起動に失敗しました。再読込してください。");
+            }
+        }
+    };
+
+    stopBtn.onclick = () => {
+        isActive = false;
+        clearTimeout(restartTimeoutId);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        if (recognition) {
+            try { recognition.stop(); } catch(e){}
+        }
+        updateStatus('offline', "停止しました");
+    };
+
+    copyBtn.onclick = async () => {
+        const text = finalSpan.innerText;
+        if (!text.trim()) return;
+        try {
+            await navigator.clipboard.writeText(text);
+            const originalText = copyBtn.innerText;
+            copyBtn.innerText = "コピー完了！";
+            setTimeout(() => copyBtn.innerText = originalText, 2000);
+        } catch (err) {
+            alert("長押しして手動コピーしてください：\n\n" + text);
+        }
+    };
+
+    clearBtn.onclick = () => {
+        if (confirm("表示されているテキストを消去しますか？")) {
+            finalSpan.innerText = "";
+            interimSpan.innerText = "";
+        }
+    };
+</script>
+
+</body>
+</html>
