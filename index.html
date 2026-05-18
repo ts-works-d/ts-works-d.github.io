@@ -20,7 +20,8 @@
         @keyframes blink { 50% { opacity: 0.5; } }
         select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
-        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
+        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; margin-bottom: 10px; }
+        .setting-label:last-child { margin-bottom: 0; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
         #start { background: var(--primary); }
@@ -60,6 +61,21 @@
             </select>
             <div class="setting-box">
                 <div class="setting-label">
+                    <span>感度調整（倍率）</span>
+                    <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
+                        <option value="1">1 (標準)</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5" selected>5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10 (最大)</option>
+                    </select>
+                </div>
+                <div class="setting-label" style="margin-top: 10px;">
                     <span>ノイズ軽減（要再起動）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle" checked>
@@ -88,6 +104,7 @@
 
 <script>
     const micSelect = document.getElementById('mic-select');
+    const gainSelect = document.getElementById('gain-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -104,7 +121,13 @@
 
     let recognition = null;
     let isActive = false;
+    let stream = null;
     let restartTimeoutId = null;
+
+    // Web Audio API（感度ブースト用）の変数
+    let audioContext = null;
+    let sourceNode = null;
+    let gainNode = null;
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -131,7 +154,7 @@
         }
     }
 
-    // 文字レベルでの最高精度・重複カットロジック
+    // Android用の文字列重複自動カット処理
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
@@ -171,49 +194,23 @@
         return newText;
     }
 
-    // デバイス一覧を取得・更新（マイク競合を避けるため独立して動かす）
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-            
-            // 権限がない場合にマイク一覧をブラウザから強制的に引き出すため、一瞬だけ取得して即座に閉じる
-            let tempStream = null;
-            try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const hasLabels = devices.some(d => d.kind === 'audioinput' && d.label !== "");
-                if (!hasLabels && isActive) {
-                    tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                }
-            } catch(e) { console.log("一時ストリーム取得スキップ"); }
-
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioInputs = devices.filter(d => d.kind === 'audioinput');
             const currentVal = micSelect.value;
             micSelect.innerHTML = '';
             
-            if (audioInputs.length === 0 || audioInputs[0].label === "") {
-                const opt = document.createElement('option');
-                opt.value = "";
-                opt.text = "既定のマイク（認識開始後に選択可能）";
-                micSelect.appendChild(opt);
-                // 一時ストリームの解放
-                if (tempStream) tempStream.getTracks().forEach(t => t.stop());
-                return;
-            }
-
             audioInputs.forEach((d, i) => {
                 const opt = document.createElement('option');
                 opt.value = d.deviceId; 
                 opt.text = d.label || `マイク ${i + 1}`;
                 micSelect.appendChild(opt);
             });
-
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-
-            // 一時ストリームの完全解放（音声認識エンジンにマイクを譲る）
-            if (tempStream) tempStream.getTracks().forEach(t => t.stop());
         } catch (e) { console.error(e); }
     }
 
@@ -242,8 +239,6 @@
                     if (cleanedText === "") continue;
 
                     let currentFinal = finalSpan.innerText;
-                    
-                    // Android重複カット
                     cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
                     if (cleanedText === "") continue;
 
@@ -271,7 +266,7 @@
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 250);
+                }, 300);
             } 
         };
         
@@ -291,26 +286,50 @@
         clearTimeout(restartTimeoutId);
         
         if (recognition) { 
-            recognition.ononstart = null;
             recognition.onend = null; 
             recognition.onerror = null;
-            recognition.onresult = null;
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
+
+        // オーディオコンテキストのクリーンアップ
+        if (gainNode) { gainNode.disconnect(); gainNode = null; }
+        if (sourceNode) { sourceNode.disconnect(); sourceNode = null; }
+        if (audioContext) { try { await audioContext.close(); } catch(e){} audioContext = null; }
+
+        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
     async function startStream() {
-        // デバイス一覧を最新化しつつ競合ストリームを排除
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+
+        // 1. 生のマイク音声を取得
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
         await refreshDevices();
 
+        // 2. Web Audio API を使って音声を増幅する接続経路を作成
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioContext = new AudioContext();
+        sourceNode = audioContext.createMediaStreamSource(stream);
+        gainNode = audioContext.createGain();
+        
+        // 選択されたリストボックスの感度（1〜10）を反映
+        gainNode.gain.value = parseFloat(gainSelect.value);
+        
+        // マイクから入った音をゲインノードに接続
+        sourceNode.connect(gainNode);
+
+        // 3. 認識処理を安全にスタート
         const rec = setupRecognition();
-        if (rec) {
-            // ノイズ軽減などの追加設定はブラウザのSpeechRecognition標準の処理系に委ねる
-            rec.start();
-        }
+        if (rec) rec.start();
     }
 
     startBtn.onclick = async () => {
@@ -323,14 +342,24 @@
         } catch (e) {
             console.error(e);
             updateStatus('error', "起動失敗。設定を確認してください。");
-            startBtn.disabled = false;
-            isActive = false;
+            await stopMedia();
         }
     };
 
     stopBtn.onclick = async () => {
+        startBtn.disabled = true;
         await stopMedia();
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
         updateStatus('', "停止しました。");
+    };
+
+    // リストボックスの感度が変更されたらリアルタイムに音量を調整
+    gainSelect.onchange = () => {
+        if (gainNode) {
+            gainNode.gain.value = parseFloat(gainSelect.value);
+            addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
+        }
     };
 
     copyBtn.onclick = async () => {
@@ -393,9 +422,7 @@
         } 
     };
 
-    window.onload = () => {
-        refreshDevices().catch(e => console.log("初期化スキップ"));
-    };
+    window.onload = refreshDevices;
 </script>
 </body>
 </html>
