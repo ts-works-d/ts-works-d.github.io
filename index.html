@@ -63,10 +63,10 @@
                     <span>感度調整（倍率）</span>
                     <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
                         <option value="1">1 (標準)</option>
-                        <option value="2">2</option>
+                        <option value="2" selected>2</option>
                         <option value="3">3</option>
                         <option value="4">4</option>
-                        <option value="5" selected>5</option>
+                        <option value="5">5</option>
                         <option value="6">6</option>
                         <option value="7">7</option>
                         <option value="8">8</option>
@@ -77,7 +77,7 @@
                 <div class="setting-label">
                     <span>ノイズ軽減（要再起動）</span>
                     <label class="switch">
-                        <input type="checkbox" id="noise-toggle" checked>
+                        <input type="checkbox" id="noise-toggle">
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -123,7 +123,6 @@
     let stream = null;
     let restartTimeoutId = null;
     
-    // Android環境の厳密な判定
     const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
@@ -151,7 +150,7 @@
         }
     }
 
-    // デバイス一覧の更新（Androidでも確実に取得できるようにタイミングを最適化）
+    // デバイス一覧の取得処理
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -180,16 +179,18 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // 【Androidフリーズ・増殖対策の核心】
-        // Androidは絶対にcontinuousをfalse（単発使い捨て）にする。PCは快適性のためtrueを維持。
+        // Androidは安定稼働のためfalse（使い捨て）、PCは連続モードを維持
         recognition.continuous = !isAndroid;
 
-        recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
+        // 【最重要修正】認識が正常に始まった段階で、Androidでもデバイス一覧を安全に再取得する
+        recognition.onstart = async () => {
+            updateStatus('online', "認識中：お話しください。");
+            await refreshDevices();
+        };
         
         recognition.onresult = (e) => {
             let interimText = '';
             
-            // e.resultIndexから最新の結果までを素直にループ処理
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let result = e.results[i];
                 if (result.isFinal) {
@@ -207,17 +208,16 @@
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
-                    addLog(cleanedText, true); // 確定した文をログに1発だけ綺麗に流す
+                    addLog(cleanedText, true); // 確定文をログに送信
                     interimText = ''; 
                 } else {
                     interimText += result[0].transcript;
                 }
             }
             
-            // 認識中（暫定）ストリーム（グレー文字）を即座に反映
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
-                addLog(interimText, false); // リアルタイムな中間ログを表示
+                addLog(interimText, false); // 認識中のテキストも確実にログエリアに表示
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
@@ -225,9 +225,6 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
-                // 【超重要リスタート戦略】
-                // Androidは単発モードなので1文ごとに必ずここに来る。ラグをゼロにするため「0ミリ秒」で超即時再起動。
-                // PCは文字落を防ぐために安全クッション（150ミリ秒）を挟む。
                 const delay = isAndroid ? 0 : 150;
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
@@ -261,22 +258,23 @@
     }
 
     async function startStream() {
-        // マイクの権限とストリームを確実に確保（Androidのマイク選択拒否を打破）
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? deviceId : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
+        // 【衝突回避】Androidの認識エンジンと衝突させないため、PC環境でのみ明示的なマイクストリームの初期確保を行う
+        if (!isAndroid) {
+            const deviceId = micSelect.value;
+            const constraints = {
+                audio: {
+                    deviceId: deviceId ? deviceId : undefined,
+                    echoCancellation: true,
+                    noiseSuppression: noiseToggle.checked,
+                    autoGainControl: true
+                }
+            };
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                await refreshDevices();
+            } catch (e) { 
+                console.warn("マイク取得エラー:", e); 
             }
-        };
-        try {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-            // 権限が取れたこの直後にデバイス一覧を再取得することで、Androidでもマイク名が確実に並ぶ
-            await refreshDevices();
-        } catch (e) { 
-            console.warn("マイクアクセス制限:", e); 
         }
 
         const rec = setupRecognition();
@@ -307,7 +305,7 @@
     };
 
     gainSelect.onchange = () => {
-        // 処理なし（ログ出力廃止）
+        // ログ出力なし
     };
 
     copyBtn.onclick = async () => {
@@ -370,9 +368,11 @@
         } 
     };
 
-    // 起動時にまず一度デバイス一覧の取得を試みる（PC用・Androidでも権限があれば出る）
+    // 起動時にまず一度デバイス一覧の取得を試みる（PC環境用）
     window.onload = async () => {
-        await refreshDevices();
+        if (!isAndroid) {
+            await refreshDevices();
+        }
     };
 </script>
 </body>
