@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（超軽量・シンプル一本化版）</title>
+    <title>逐語録（自動蘇生・永続稼働版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 800px; margin: auto; color: #333; }
@@ -42,7 +42,7 @@
 <body>
 
 <div class="card">
-    <h2>逐語録</h2>
+    <h2>逐語録（自動蘇生・永続稼働版）</h2>
     <div class="conn-status">
         <div id="indicator" class="indicator"></div>
         <span id="conn-text">音声認識：待機中</span>
@@ -105,7 +105,7 @@
     let isActive = false;
     let configTimeout = null;
     
-    // 重複を弾くための軽量メモリバッファ
+    // 重複対策バッファ
     let confirmedSet = new Set();
     let processedIndices = new Set();
     let lastConfirmedText = "";
@@ -114,14 +114,17 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：稼働中"; 
+            connText.innerText = "音声認識：稼働中（常時監視・永続ループ）"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
-            connText.innerText = "音声認識：停止中"; 
+            connText.innerText = "音声認識：エラー停止"; 
             statusDisp.style.background = "#f8d7da"; 
+        } else if(type === 'connecting') {
+            connText.innerText = "音声認識：自動再接続中..."; 
+            statusDisp.style.background = "#fff3cd"; 
         } else { 
             connText.innerText = "音声認識：待機中"; 
-            statusDisp.style.background = "#fff3cd"; 
+            statusDisp.style.background = "#f8f9fa"; 
         }
     }
 
@@ -146,7 +149,8 @@
     }
 
     function startSpeechEngine() {
-        if (recognition) return;
+        // 稼働フラグがOFFなら絶対に起動しない（意図しない多重起動防止）
+        if (!isActive || recognition) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
@@ -185,13 +189,11 @@
 
                     const cleanText = transcript.replace(/[\s。、]/g, "");
                     
-                    // 重複の高速ブロック
                     if (confirmedSet.has(cleanText)) {
                         processedIndices.add(i);
                         continue;
                     }
 
-                    // 雪だるま式再送の差分吸収
                     if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
                         transcript = transcript.substring(lastConfirmedText.length).trim();
                     }
@@ -205,7 +207,6 @@
                     processedIndices.add(i);
                     lastConfirmedText = transcript;
 
-                    // 画面への確定文字反映
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
@@ -213,7 +214,7 @@
                     finalSpan.innerText += separator + transcript;
                     interimText = '';
                 } else {
-                    const cleanInterim = transcript.replace(/[\s].、]/g, "");
+                    const cleanInterim = transcript.replace(/[\s。、]/g, "");
                     if (!processedIndices.has(i) && !confirmedSet.has(cleanInterim)) {
                         interimText += transcript;
                     }
@@ -224,14 +225,22 @@
             outputBox.scrollTop = outputBox.scrollHeight;
         };
 
+        // 【諸悪の根源：勝手な停止を完全にねじ伏せるロジック】
         recognition.onend = () => {
             recognition = null;
+            
+            // ユーザーが明示的に「停止」ボタンを押していない（isActiveがtrue）なら
+            // システム側の勝手なタイムアウトとみなし、100ミリ秒後に強制再起動（ゾンビループ）
             if (isActive) {
-                setTimeout(() => { if (isActive) startSpeechEngine(); }, 200);
+                updateStatus('connecting', "無音またはセッション切れを検知。自動復旧しています...");
+                setTimeout(() => {
+                    if (isActive) startSpeechEngine();
+                }, 100);
             }
         };
 
         recognition.onerror = (ev) => {
+            // マイク拒否以外は基本無視してゾンビループへ引き継ぐ
             if (ev.error === 'not-allowed') {
                 updateStatus('error', "マイク権限がありません。");
                 stopSpeechEngine();
@@ -246,10 +255,11 @@
     }
 
     function stopSpeechEngine() {
-        isActive = false;
+        isActive = false; // 先に稼働フラグをへし折る（これでonendの自動蘇生ループが完全に止まる）
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
+        
         if (recognition) {
             try {
                 recognition.onstart = null;
@@ -263,7 +273,7 @@
         interimSpan.innerText = "";
     }
 
-    // フリーズを防ぐ安全ウェイト
+    // 設定変更時の安全ウェイト
     function handleConfigChange() {
         if (!isActive) return;
         if (recognition) {
