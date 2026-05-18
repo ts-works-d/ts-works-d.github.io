@@ -121,7 +121,6 @@
 
     let recognition = null;
     let isActive = false;
-    let stream = null;
     let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
@@ -149,7 +148,7 @@
         }
     }
 
-    // Android用の文字列重複自動カット処理（最新版）
+    // Android重複文字排除ロジック
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
@@ -189,9 +188,26 @@
         return newText;
     }
 
+    // デバイス一覧を取得する関数（マイク競合バグを絶対に起こさない安全設計）
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            
+            // 選択されているマイクのIDを一時保持
+            const deviceId = micSelect.value;
+            const constraints = {
+                audio: {
+                    deviceId: deviceId ? { exact: deviceId } : undefined,
+                    echoCancellation: true,
+                    noiseSuppression: noiseToggle.checked,
+                    autoGainControl: true
+                }
+            };
+
+            // 1. 一瞬だけマイクストリームを開いてデバイスのラベル（名称）の権限を解除する
+            const tempStream = await navigator.mediaDevices.getUserMedia(constraints);
+            
+            // 2. デバイス一覧を読み込む
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioInputs = devices.filter(d => d.kind === 'audioinput');
             const currentVal = micSelect.value;
@@ -206,7 +222,11 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error(e); }
+
+            // 【超重要】音声認識エンジン(SpeechRecognition)にマイク権限を100%明け渡すため、取得したトラックを即座に「完全停止」させる
+            tempStream.getTracks().forEach(track => track.stop());
+
+        } catch (e) { console.error("デバイス一覧取得エラー:", e); }
     }
 
     function setupRecognition() {
@@ -261,7 +281,7 @@
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 200);
+                }, 250);
             } 
         };
         
@@ -286,29 +306,15 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
     }
 
     async function startStream() {
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? deviceId : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
-            }
-        };
+        // マイク一覧を安全に更新し、かつ完全にストリームを閉じる
+        await refreshDevices();
 
-        // ミュート競合を避けるため、安全にマイク権限の確認とデバイス取得を行う
-        try {
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
-            await refreshDevices();
-        } catch (err) {
-            console.warn("ストリーム初期化スキップ(認識単独起動を行います)", err);
-        }
-
-        // スマホで無音化（認識しなくなるバグ）させないよう、音声認識を綺麗に単独スタート
+        // 他の処理がマイクを掴んでいないクリーンな状態で音声認識のみをスタート
         const rec = setupRecognition();
         if (rec) rec.start();
     }
@@ -336,7 +342,6 @@
         updateStatus('', "停止しました。");
     };
 
-    // 感度セレクトボックスが変更された際の挙動（ログを確実に残す）
     gainSelect.onchange = () => {
         addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
     };
@@ -401,7 +406,10 @@
         } 
     };
 
-    window.onload = refreshDevices;
+    // 初回読み込み時は空回りを防ぐため待機させる
+    window.onload = () => {
+        console.log("初期化待機状態");
+    };
 </script>
 </body>
 </html>
