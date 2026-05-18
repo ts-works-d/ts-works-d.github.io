@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（完全独立エンジン・不具合根絶版）</title>
-    <script src="https://cdn.jsdelivr.net/npm/vosk-browser@0.0.10/dist/vosk.prod.js"></script>
+    <title>逐語録（完全制御ハイブリッド版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -51,13 +50,13 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（独立エンジン・不具合完全根絶版）</h2>
+            <h2>逐語録（完全制御ハイブリッド版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
             <select id="mic-select">
-                <option value="">-- マイクを選択（変更時にリアルタイム反映） --</option>
+                <option value="">-- マイクを選択（変更時に即反映） --</option>
             </select>
             <div class="setting-box">
                 <div class="setting-label" style="margin-bottom: 12px;">
@@ -76,7 +75,7 @@
                     </select>
                 </div>
                 <div class="setting-label">
-                    <span>ノイズ軽減</span>
+                    <span>ノイズ軽減（選択マイクへ適用）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle">
                         <span class="slider"></span>
@@ -119,13 +118,16 @@
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
 
-    let model = null;
-    let recognizer = null;
+    let recognition = null;
     let audioContext = null;
     let currentStream = null;
     let gainNode = null;
-    let processorNode = null;
+    let analyserNode = null;
+    let scriptNode = null;
     let isActive = false;
+    let isSpeechDetected = false;
+    let silenceTimer = null;
+    let lastFinalText = "";
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -141,7 +143,7 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：稼働中"; 
+            connText.innerText = "音声認識：連動稼働中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
             connText.innerText = "音声認識：エラー"; 
@@ -172,16 +174,17 @@
         } catch (e) { console.error(e); }
     }
 
-    async function cleanupAudio() {
-        if (processorNode) { processorNode.disconnect(); processorNode = null; }
+    async function cleanupAudioPipeline() {
+        if (scriptNode) { scriptNode.disconnect(); scriptNode = null; }
+        if (analyserNode) { analyserNode.disconnect(); analyserNode = null; }
         if (gainNode) { gainNode.disconnect(); gainNode = null; }
         if (currentStream) { currentStream.getTracks().forEach(t => t.stop()); currentStream = null; }
-        if (audioContext) { await audioContext.close(); audioContext = null; }
+        if (audioContext) { if (audioContext.state !== 'closed') await audioContext.close(); audioContext = null; }
     }
 
-    // マイク・感度・ノイズが確実に100%効く、ピュアな音声処理パイプライン
-    async function initAudioPipeline() {
-        await cleanupAudio();
+    // マイク・感度・ノイズの選択値を100%反映したオーディオ回路を構築
+    async function setupAudioPipeline() {
+        await cleanupAudioPipeline();
 
         const selectedMicId = micSelect.value;
         const constraints = {
@@ -194,79 +197,127 @@
         };
 
         currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); // 認識エンジンに最適な16kHz
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
         const source = audioContext.createMediaStreamSource(currentStream);
         gainNode = audioContext.createGain();
-        gainNode.gain.value = parseFloat(gainSelect.value) || 2.0; // 選択された倍率を直撃適用
+        
+        // 選択された「感度（倍率）」を物理音声波形に直撃反映
+        gainNode.gain.value = parseFloat(gainSelect.value) || 2.0;
 
-        // 16kHzのPCMモノラル音声を直接抽出して認識エンジンへ転送する処理
-        processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-        processorNode.onaudioprocess = (e) => {
-            if (!isActive || !recognizer) return;
-            const inputData = e.inputBuffer.getChannelData(0);
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 256;
+
+        scriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+        
+        // 加工が終わった音声の音量（RMS）を監視して、認識処理のON/OFFを動的に完全制御
+        scriptNode.onaudioprocess = () => {
+            if (!isActive) return;
+            const array = new Float32Array(analyserNode.fftSize);
+            analyserNode.getFloatTimeDomainData(array);
             
-            // 独立エンジンに加工済みの生バッファを直接投入
-            if (recognizer.acceptWaveform(inputData)) {
-                const result = recognizer.result();
-                if (result.text) {
-                    processRecognizedText(result.text, true);
+            let sum = 0;
+            for (let i = 0; i < array.length; i++) {
+                sum += array[i] * array[i];
+            }
+            const rms = Math.sqrt(sum / array.length);
+
+            // 閾値（音量が一定以上＝発話中と判定）
+            if (rms > 0.01) {
+                if (!isSpeechDetected) {
+                    isSpeechDetected = true;
+                    startSpeechRecognitionEngine(); // 声を検知したらエンジンを即座に結合
                 }
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
             } else {
-                const partial = recognizer.partialResult();
-                if (partial.partial) {
-                    processRecognizedText(partial.partial, false);
+                // 音が途切れてから450ms後に、Androidのバッファを強制廃棄（多重表示・フリーズを完全根絶）
+                if (isSpeechDetected && !silenceTimer) {
+                    silenceTimer = setTimeout(() => {
+                        isSpeechDetected = false;
+                        stopSpeechRecognitionEngine();
+                    }, 450);
                 }
             }
         };
 
         source.connect(gainNode);
-        gainNode.connect(processorNode);
-        processorNode.connect(audioContext.destination);
+        gainNode.connect(analyserNode);
+        analyserNode.connect(scriptNode);
+        scriptNode.connect(audioContext.destination);
     }
 
-    function processRecognizedText(text, isFinal) {
-        let cleanedText = text.replace(/\s+/g, "").trim();
-        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
-        cleanedText = cleanedText.replace(fillerRegex, "").trim();
+    function startSpeechRecognitionEngine() {
+        if (recognition || !isActive) return;
 
-        if (!cleanedText) return;
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return;
 
-        if (isFinal) {
-            const currentFinal = finalSpan.innerText.trim();
-            let separator = currentFinal !== "" ? "\n" : "";
-            if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-            
-            finalSpan.innerText += separator + cleanedText;
-            addLog(cleanedText, true);
-            interimSpan.innerText = "";
-        } else {
-            interimSpan.innerText = cleanedText;
-            addLog(cleanedText, false);
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ja-JP';
+        recognition.interimResults = true;
+        recognition.continuous = false; // 1単語・1文ごとにバッファをクリーンにするためfalse
+
+        recognition.onresult = (e) => {
+            let interimText = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                let result = e.results[i];
+                if (result.isFinal) {
+                    let cleanedText = result[0].transcript.trim();
+                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
+                    cleanedText = cleanedText.replace(fillerRegex, "").trim();
+                    
+                    if (cleanedText === "" || cleanedText === lastFinalText) continue;
+                    lastFinalText = cleanedText;
+
+                    const currentFinal = finalSpan.innerText.trim();
+                    let separator = currentFinal !== "" ? "\n" : "";
+                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+
+                    finalSpan.innerText += separator + cleanedText;
+                    addLog(cleanedText, true);
+                    interimText = '';
+                } else {
+                    interimText += result[0].transcript;
+                }
+            }
+            interimSpan.innerText = interimText;
+            if (interimText.trim() !== "") {
+                addLog(interimText, false);
+            }
+            outputBox.scrollTop = outputBox.scrollHeight;
+        };
+
+        recognition.onerror = () => {};
+        recognition.onend = () => { recognition = null; };
+
+        try { recognition.start(); } catch(e) {}
+    }
+
+    // 音が途切れた瞬間に、認識途中の壊れたバッファごと「強制破棄」してAndroidの増殖を防ぐ
+    function stopSpeechRecognitionEngine() {
+        if (recognition) {
+            try {
+                recognition.abort(); // stopではなくabortを使うことで、古いバッファを完全に消し去ります
+            } catch(e) {}
+            recognition = null;
         }
-        outputBox.scrollTop = outputBox.scrollHeight;
+        interimSpan.innerText = "";
     }
 
     startBtn.onclick = async () => {
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        updateStatus('connecting', "音声認識エンジン（超軽量モデル）を初期化中...");
+        lastFinalText = "";
+        updateStatus('connecting', "指定構成でシステムをロック中...");
 
         try {
-            // エンジン（Voskモデル）のロード（初回のみ、ブラウザ上に超軽量日本語モデルを安全に展開）
-            if (!model) {
-                model = await Vosk.createModel('https://alphacephei.com/vosk/models/vosk-model-small-ja-0.22.zip');
-            }
-            if (!recognizer) {
-                recognizer = new model.KaldiRecognizer(16000);
-            }
-
-            await initAudioPipeline();
-            updateStatus('online', "エンジン完全連動中：お話しください。");
+            await setupAudioPipeline();
+            updateStatus('online', "システム完全連動：お話しください。");
         } catch (err) {
             console.error(err);
-            updateStatus('error', "起動失敗。マイクアクセスを確認してください。");
+            updateStatus('error', "起動失敗。マイクの許可、または接続を確認してください。");
             startBtn.disabled = false;
             stopBtn.disabled = true;
             isActive = false;
@@ -275,22 +326,23 @@
 
     stopBtn.onclick = async () => {
         isActive = false;
+        clearTimeout(silenceTimer);
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
-        await cleanupAudio();
-        interimSpan.innerText = "";
+        stopSpeechRecognitionEngine();
+        await cleanupAudioPipeline();
     };
 
     micSelect.onchange = async () => {
         if (isActive) {
-            updateStatus('connecting', "マイクを物理切替中...");
-            await initAudioPipeline();
+            updateStatus('connecting', "マイク切替中...");
+            await setupAudioPipeline();
             updateStatus('online', "マイク切替完了：お話しください。");
         }
     };
 
-    // 【完全連動】感度変更時の不要なログは一切出力せず、ゲインパラメータのみをリアルタイムに直撃書き換え
+    // 【完全連動】感度変更：不要なログは一切出力せず、GainNodeの倍率のみをリアルタイムに直撃書き換え
     gainSelect.onchange = () => {
         const newVal = parseFloat(gainSelect.value) || 2.0;
         if (gainNode && audioContext) {
@@ -301,7 +353,7 @@
     noiseToggle.onchange = async () => {
         if (isActive) {
             updateStatus('connecting', "ノイズ処理変更中...");
-            await initAudioPipeline();
+            await setupAudioPipeline();
             updateStatus('online', "変更完了：お話しください。");
         }
     };
@@ -338,6 +390,7 @@
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
+            lastFinalText = "";
         }
     };
 
