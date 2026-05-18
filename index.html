@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（全設定・機能完全連動版）</title>
-    <script src="https://cdn.jsdelivr.net/npm/@onnxruntime/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
+    <title>逐語録（全設定完全連動版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -51,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（全設定・機能完全連動版）</h2>
+            <h2>逐語録（全設定完全連動版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -123,7 +122,7 @@
     let isActive = false;
     let currentStream = null;
     let audioContext = null;
-    let gainNode = null; // 動的に倍率を変更するためのノード保持
+    let gainNode = null;
     let restartTimeoutId = null;
     let lastFinalText = "";
 
@@ -171,10 +170,9 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error("デバイス一覧取得失敗", e); }
+        } catch (e) { console.error(e); }
     }
 
-    // ストリームの完全停止とオーディオ処理回路のクリーンアップ
     async function cleanupAudioPipeline() {
         if (currentStream) {
             currentStream.getTracks().forEach(t => t.stop());
@@ -189,7 +187,6 @@
         gainNode = null;
     }
 
-    // 指定されたマイク、指定されたノイズ軽減設定で「完全にクリーンな音声回路」を構築する
     async function setupAudioPipeline() {
         await cleanupAudioPipeline();
 
@@ -198,23 +195,20 @@
             audio: {
                 deviceId: selectedMicId ? { exact: selectedMicId } : undefined,
                 echoCancellation: true,
-                noiseSuppression: noiseToggle.checked, // 【完全連動】ノイズ設定をマイクハードにダイレクト適用
-                autoGainControl: false // 感度調整をJavaScript側で厳密に行うため自動制御はオフ
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: false
             }
         };
 
         currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); // 音声認識に最適な16kHz固定
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
         
         const source = audioContext.createMediaStreamSource(currentStream);
         gainNode = audioContext.createGain();
-        
-        // 【完全連動】選択された「感度（倍率）」の初期値を物理音声波形へ直撃反映
         gainNode.gain.value = parseFloat(gainSelect.value) || 2.0;
         
         source.connect(gainNode);
         
-        // ここで作成した加工済みストリーム(gainNode)の音声を、ブラウザの音声認識パイプラインに同期させるためのプロセッサノード
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         gainNode.connect(processor);
         processor.connect(audioContext.destination);
@@ -224,7 +218,6 @@
 
     async function startAudioAndRecognition() {
         try {
-            // 先に「指定マイク」「指定感度」「指定ノイズ」を適用した音声パイプラインを100%確定させる
             await setupAudioPipeline();
 
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -236,12 +229,10 @@
             recognition = new SpeechRecognition();
             recognition.lang = 'ja-JP';
             recognition.interimResults = true;
-            
-            // 【Android多重表示を物理根絶】Android環境では連続認識モードを完全に遮断。1文ごとにバッファを強制廃棄。
-            recognition.continuous = !isAndroid;
+            recognition.continuous = !isAndroid; // Androidは多重表示対策のためfalse固定
 
             recognition.onstart = () => {
-                updateStatus('online', "設定完全連動：お話しください。");
+                updateStatus('online', "設定連動中：お話しください。");
             };
 
             recognition.onresult = (e) => {
@@ -276,7 +267,6 @@
             };
 
             recognition.onend = () => {
-                // 音声バッファが絶対に詰まらない安全秒数（350ms）を維持してリサイクル
                 if (isActive) {
                     clearTimeout(restartTimeoutId);
                     restartTimeoutId = setTimeout(() => {
@@ -289,15 +279,15 @@
 
             recognition.onerror = (ev) => {
                 if (ev.error !== 'no-speech' && ev.error !== 'audio-capture') {
-                    console.warn("認識モジュール通知:", ev.error);
+                    console.warn(ev.error);
                 }
             };
 
             recognition.start();
 
         } catch (err) {
-            console.error("ハードウェア接続エラー:", err);
-            updateStatus('error', "指定マイクへの接続に失敗しました。");
+            console.error(err);
+            updateStatus('error', "起動失敗。構成を確認してください。");
             startBtn.disabled = false;
             stopBtn.disabled = true;
             isActive = false;
@@ -309,8 +299,7 @@
         startBtn.disabled = true;
         stopBtn.disabled = false;
         lastFinalText = "";
-        updateStatus('connecting', "指定構成でマイクをロック中...");
-        
+        updateStatus('connecting', "マイクをロック中...");
         await startAudioAndRecognition();
     };
 
@@ -320,33 +309,29 @@
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
-        
         if (recognition) { try { recognition.stop(); } catch(e){} }
         await cleanupAudioPipeline();
     };
 
-    // 【完全連動】マイク切り替え時：既存接続を完全に壊して新指定マイクで一からパイプラインを再構築する
     micSelect.onchange = async () => {
         if (isActive) {
-            updateStatus('connecting', "指定マイクへ完全切替中...");
+            updateStatus('connecting', "マイク切替中...");
             if (recognition) { try { recognition.stop(); } catch(e){} }
             await startAudioAndRecognition();
         }
     };
 
-    // 【完全連動】感度調整時：回路を壊さず、GainNodeの倍率をリアルタイムに書き換える（完全に効きます）
+    // 感度変更時の「不要なログ出力」を完全に削除（内部パラメータ変更のみ処理）
     gainSelect.onchange = () => {
         const newVal = parseFloat(gainSelect.value) || 2.0;
-        if (gainNode) {
+        if (gainNode && audioContext) {
             gainNode.gain.setValueAtTime(newVal, audioContext.currentTime);
-            addLog(`感度倍率を [${newVal}] にリアルタイム適用しました`, false);
         }
     };
 
-    // 【完全連動】ノイズ軽減切り替え時：マイク入力を開き直してハードウェアノイズサプレッサーを強制制御
     noiseToggle.onchange = async () => {
         if (isActive) {
-            updateStatus('connecting', "ノイズフィルター構成変更中...");
+            updateStatus('connecting', "設定変更中...");
             if (recognition) { try { recognition.stop(); } catch(e){} }
             await startAudioAndRecognition();
         }
@@ -393,9 +378,7 @@
             const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             await refreshDevices();
             initStream.getTracks().forEach(t => t.stop());
-        } catch(e){
-            console.warn("初期デバイスリスト取得のスキップ:", e);
-        }
+        } catch(e){}
     };
 </script>
 </body>
