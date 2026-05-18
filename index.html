@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>逐語録 Pro - Zero Drop (ボーカル抽出特化・モバイル対応完全版)</title>
+    <title>逐語録 Pro - Zero Drop (ボーカル抽出特化・フル機能安定版)</title>
     <style>
         :root { --bg: #0d1117; --text: #c9d1d9; --accent: #58a6ff; --border: #30363d; --danger: #f85149; --success: #238636; --warning: #ffc107; --info: #17a2b8; --secondary: #6c757d; }
         body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
@@ -15,6 +15,7 @@
         #btn-stop { background: var(--danger); color: white; border: none; }
         .filter-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #adbac7; background: #222; padding: 5px 10px; border-radius: 20px; border: 1px solid #444; }
         
+        /* ログパネル並列化のためのコンテナレイアウト */
         .workspace { flex: 1; display: flex; overflow: hidden; }
         .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
         
@@ -24,6 +25,7 @@
         .block { margin-bottom: 0.8em; border-left: 2px solid var(--accent); padding-left: 12px; min-height: 1.6em; word-break: break-all; white-space: pre-wrap; }
         .interim { color: #8b949e; font-style: italic; }
         
+        /* index02由来の認識中流動ログパネル（ダークモード風調整） */
         .log-panel { width: 300px; background: #161b22; display: flex; flex-direction: column; box-sizing: border-box; }
         .log-panel-title { padding: 10px 15px; font-size: 12px; font-weight: bold; border-bottom: 1px solid var(--border); color: #8b949e; text-align: center; }
         .log-area { flex: 1; padding: 15px; font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #39ff14; overflow-y: auto; box-sizing: border-box; line-height: 1.4; }
@@ -47,14 +49,21 @@
         <label>感度:</label>
         <select id="boost-select">
             <option value="1.0">1.0</option>
-            <option value="2.0" selected>2.0</option>
-            <option value="4.0">4.0</option>
+            <option value="2.0">2.0</option>
+            <option value="3.0">3.0</option>
+            <option value="4.0" selected>4.0</option>
+            <option value="5.0">5.0</option>
+            <option value="6.0">6.0</option>
+            <option value="7.0">7.0</option>
             <option value="8.0">8.0</option>
+            <option value="9.0">9.0</option>
+            <option value="10.0">10.0</option>
+            <option value="11.0">11.0</option>
             <option value="12.0">12.0</option>
         </select>
     </div>
     <div class="filter-toggle">
-        <input type="checkbox" id="bgm-filter" checked>
+        <input type="checkbox" id="bgm-filter">
         <label for="bgm-filter">声のみ抽出 (ノイズ除去)</label>
     </div>
     <button id="btn-start" disabled>開始</button>
@@ -95,16 +104,11 @@
     let gainNode = null, bHighPass = null, bPeaking = null;
     let animationFrameId = null;
     let restartTimeoutId = null;
-    let multiplier = 2.0;
+    let multiplier = 4.0;
 
     function resetPermissions() { window.location.reload(); }
 
     async function init() {
-        // 非セキュア環境（スマホからのIPアドレス直接接続など）の警告表示
-        if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-            alert("【警告】非HTTPS環境（IPアドレス直接接続など）では、スマホのブラウザ仕様によりマイクや音声認識機能が強制遮断されます。PCのlocalhostで試すか、HTTPS環境を構築してください。");
-        }
-
         try {
             const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
             temp.getTracks().forEach(t => t.stop());
@@ -112,7 +116,6 @@
             document.getElementById('btn-start').disabled = false;
         } catch (e) { 
             document.getElementById('engine-status').innerText = "MIC ERROR"; 
-            console.error("マイク初期化エラー:", e);
         }
     }
 
@@ -134,6 +137,7 @@
         } catch(e) { console.error(e); }
     }
 
+    // index02仕様のストリームログ追加ロジック
     function addStreamLog(text, isFinal) {
         const logArea = document.getElementById('log-area');
         const entry = document.createElement('div');
@@ -145,26 +149,30 @@
         if (logArea.childNodes.length > 50) logArea.removeChild(logArea.firstChild);
     }
 
+    // テキスト確定時のブロック処理（index01のフィラー除去＋index02の高度な改行/句読点処理のマージ）
     function addFinalBlock(text) {
         let cleanedText = text.trim();
         if (!cleanedText) return;
 
+        // 高度なフィラー除去
         const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
         cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
         if (cleanedText === "") return;
 
         const screen = document.getElementById('log-screen');
         
+        // 重複除去のチェック
         if (screen.lastElementChild && (screen.lastElementChild.innerText.trim() === cleanedText || screen.lastElementChild.innerText.trim() === cleanedText + "。")) return;
 
         const newBlock = document.createElement('div');
         newBlock.className = 'block';
 
+        // index02流の文末句読点判定
         const hasPunctuation = /[。？！\?\!]$/.test(cleanedText);
         newBlock.innerText = cleanedText + (hasPunctuation ? "" : "。");
         
         screen.appendChild(newBlock);
-        addStreamLog(cleanedText, true);
+        addStreamLog(cleanedText, true); // 確定ログをサイドストリームへ流す
 
         requestAnimationFrame(() => {
             screen.scrollTop = screen.scrollHeight;
@@ -173,10 +181,7 @@
 
     function setupRecognition() {
         const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!Speech) {
-            alert("このブラウザ・端末は音声認識（SpeechRecognition）に対応していません。Android Chrome、またはPC環境でお試しください。");
-            return null;
-        }
+        if (!Speech) return null;
 
         const rec = new Speech();
         rec.lang = 'ja-JP';
@@ -203,11 +208,12 @@
             if (activeLine.innerText !== nextText) {
                 activeLine.innerText = nextText;
                 if (interimStr.trim() !== "") {
-                    addStreamLog(interimStr, false);
+                    addStreamLog(interimStr, false); // 途中経過ログをサイドストリームへ流す
                 }
             }
         };
 
+        // Edgeクラッシュ対策用の安全弁
         rec.onend = () => {
             if (isRunning) {
                 clearTimeout(restartTimeoutId);
@@ -221,16 +227,13 @@
 
         rec.onerror = (ev) => {
             if (ev.error !== 'no-speech') console.warn("認識エラー:", ev.error);
-            if (ev.error === 'not-allowed') {
-                document.getElementById('engine-status').innerText = "BLOCKED";
-                alert("マイクの権限、またはセキュア接続(HTTPS)の制限により音声認識が拒否されました。");
-            }
         };
 
         recognition = rec;
         return rec;
     }
 
+    // フィルターパラメーターのリアルタイム更新
     function updateParams() {
         if (!audioCtx || !gainNode || !bHighPass || !bPeaking) return;
         const t = audioCtx.currentTime;
@@ -264,11 +267,7 @@
         if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
         if (source) { try { source.disconnect(); } catch(e){} source = null; }
         if (analyser) { try { analyser.disconnect(); } catch(e){} analyser = null; }
-        if (audioCtx) { 
-            // 完全にCloseせず、再利用可能なようにクリアのみ実施するか、モバイル対策としてクローズ
-            try { await audioCtx.close(); } catch(e){} 
-            audioCtx = null; 
-        }
+        if (audioCtx) { try { await audioCtx.close(); } catch(e){} audioCtx = null; }
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
@@ -294,20 +293,13 @@
             }
         };
 
-        // 【モバイル最優先対策】非同期処理が入る前にAudioContextの状態を確認・復帰
-        if (!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-        }
-
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         await refreshDevices();
 
         const rec = setupRecognition();
         if (rec) rec.start();
 
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         source = audioCtx.createMediaStreamSource(stream);
         
         gainNode = audioCtx.createGain();
@@ -327,15 +319,6 @@
             document.getElementById('engine-status').innerText = "CONNECTING";
             isRunning = true;
             
-            // 【最重要】タップ・クリックイベントの直系スコープ内でAudioContextを即時生成/再開
-            // これによりモバイルブラウザの自動再生・音声ブロック仕様を完全に回避します
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
-
             multiplier = parseFloat(document.getElementById('boost-select').value);
             await startStream();
             
@@ -399,6 +382,7 @@
         });
     }
 
+    // index02仕様のファイル保存ロジック（index01の構造に最適化）
     function saveAll() {
         const text = Array.from(document.querySelectorAll('#log-screen .block')).map(b => b.innerText).join('\n');
         if (!text.trim()) {
