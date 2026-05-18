@@ -3,14 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（PCフリーズ対策・超軽量版）</title>
+    <title>逐語録（超軽量・シンプル一本化版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
-        .container { display: flex; gap: 20px; flex-wrap: wrap; }
-        .main-panel { flex: 1; min-width: 320px; }
-        .log-panel { width: 300px; min-width: 250px; display: flex; flex-direction: column; }
-        .card { background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); height: fit-content; }
+        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 800px; margin: auto; color: #333; }
+        .card { background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         h2 { margin: 0 0 15px; font-size: 1.2em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
         .conn-status { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 15px; font-weight: bold; font-size: 0.9em; }
         .indicator { width: 12px; height: 12px; border-radius: 50%; background: #ccc; }
@@ -30,12 +27,9 @@
         #clear { background: var(--secondary); }
         button:disabled { background: #ccc !important; cursor: not-allowed; opacity: 0.6; }
         .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 8px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; }
-        #output-box { width: 100%; height: 450px; padding: 20px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
+        #output-box { width: 100%; height: 500px; padding: 20px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
-        .log-area { flex-grow: 1; height: 600px; padding: 15px; border-radius: 12px; border: 1px solid #ddd; background: #222; color: #00ff00; font-family: 'Courier New', Courier, monospace; font-size: 12px; overflow-y: auto; box-sizing: border-box; }
-        .log-entry { margin-bottom: 6px; line-height: 1.4; border-left: 3px solid #00ff00; padding-left: 8px; white-space: pre-wrap; word-break: break-all; }
-        .log-time { color: #888; margin-right: 5px; }
 
         .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
         .switch input { opacity: 0; width: 0; height: 0; }
@@ -47,58 +41,48 @@
 </head>
 <body>
 
-<div class="container">
-    <div class="main-panel">
-        <div class="card">
-            <h2>逐語録（PCフリーズ対策・超軽量版）</h2>
-            <div class="conn-status">
-                <div id="indicator" class="indicator"></div>
-                <span id="conn-text">音声認識：待機中</span>
-            </div>
-            <select id="mic-select">
-                <option value="">-- マイクを選択（変更時に自動適用） --</option>
+<div class="card">
+    <h2>逐語録</h2>
+    <div class="conn-status">
+        <div id="indicator" class="indicator"></div>
+        <span id="conn-text">音声認識：待機中</span>
+    </div>
+    <select id="mic-select">
+        <option value="">-- マイクを選択（変更時に自動適用） --</option>
+    </select>
+    <div class="setting-box">
+        <div class="setting-label" style="margin-bottom: 12px;">
+            <span>感度調整（倍率）</span>
+            <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
+                <option value="1">1 (標準)</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10 (最大)</option>
             </select>
-            <div class="setting-box">
-                <div class="setting-label" style="margin-bottom: 12px;">
-                    <span>感度調整（倍率）</span>
-                    <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
-                        <option value="1">1 (標準)</option>
-                        <option value="2" selected>2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                        <option value="8">8</option>
-                        <option value="9">9</option>
-                        <option value="10">10 (最大)</option>
-                    </select>
-                </div>
-                <div class="setting-label">
-                    <span>ノイズ軽減（ネイティブ自動最適化）</span>
-                    <label class="switch">
-                        <input type="checkbox" id="noise-toggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-            <div class="controls">
-                <button id="start">認識開始</button>
-                <button id="stop" disabled>停止</button>
-                <button id="copy">コピー</button>
-                <button id="save">保存</button>
-                <button id="clear">クリア</button>
-            </div>
-            <div class="status-area" id="status-display">「認識開始」を押してください。</div>
-            <div id="output-box"><span id="final-span"></span><span id="interim-span"></span></div>
+        </div>
+        <div class="setting-label">
+            <span>ノイズ軽減（ネイティブ自動最適化）</span>
+            <label class="switch">
+                <input type="checkbox" id="noise-toggle" checked>
+                <span class="slider"></span>
+            </label>
         </div>
     </div>
-    <div class="log-panel">
-        <div class="card" style="height: 100%;">
-            <h2>確定テキストログ</h2>
-            <div id="log-area" class="log-area"></div>
-        </div>
+    <div class="controls">
+        <button id="start">認識開始</button>
+        <button id="stop" disabled>停止</button>
+        <button id="copy">コピー</button>
+        <button id="save">保存</button>
+        <button id="clear">クリア</button>
     </div>
+    <div class="status-area" id="status-display">「認識開始」を押してください。</div>
+    <div id="output-box"><span id="final-span"></span><span id="interim-span"></span></div>
 </div>
 
 <script>
@@ -113,7 +97,6 @@
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
-    const logArea = document.getElementById('log-area');
     const statusDisp = document.getElementById('status-display');
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
@@ -122,37 +105,16 @@
     let isActive = false;
     let configTimeout = null;
     
-    // 重複を最速で弾くための軽量Setオブジェクト
+    // 重複を弾くための軽量メモリバッファ
     let confirmedSet = new Set();
     let processedIndices = new Set();
     let lastConfirmedText = "";
-
-    function addConfirmedLog(text) {
-        const entry = document.createElement('div');
-        entry.className = 'log-entry';
-        
-        const timeSpan = document.createElement('span');
-        timeSpan.className = 'log-time';
-        timeSpan.textContent = `[${new Date().toLocaleTimeString()}] `;
-        
-        const textSpan = document.createElement('span');
-        textSpan.textContent = `[確定] ${text}`;
-        
-        entry.appendChild(timeSpan);
-        entry.appendChild(textSpan);
-        logArea.appendChild(entry);
-        
-        logArea.scrollTop = logArea.scrollHeight;
-        if (logArea.childNodes.length > 30) {
-            logArea.removeChild(logArea.firstChild);
-        }
-    }
 
     function updateStatus(type, msg) {
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：常時接続中"; 
+            connText.innerText = "音声認識：稼働中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
             connText.innerText = "音声認識：停止中"; 
@@ -223,7 +185,7 @@
 
                     const cleanText = transcript.replace(/[\s。、]/g, "");
                     
-                    // 超軽量Setによる重複高速ブロック（CPU負荷を最小化）
+                    // 重複の高速ブロック
                     if (confirmedSet.has(cleanText)) {
                         processedIndices.add(i);
                         continue;
@@ -239,21 +201,19 @@
                         continue;
                     }
 
-                    // 履歴に登録
                     confirmedSet.add(cleanText);
                     processedIndices.add(i);
                     lastConfirmedText = transcript;
 
-                    // 画面反映
+                    // 画面への確定文字反映
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
 
                     finalSpan.innerText += separator + transcript;
-                    addConfirmedLog(transcript);
                     interimText = '';
                 } else {
-                    const cleanInterim = transcript.replace(/[\s。、]/g, "");
+                    const cleanInterim = transcript.replace(/[\s].、]/g, "");
                     if (!processedIndices.has(i) && !confirmedSet.has(cleanInterim)) {
                         interimText += transcript;
                     }
@@ -303,20 +263,17 @@
         interimSpan.innerText = "";
     }
 
-    // 設定変更時の多重起動を絶対に防ぐ安全ウェイトリレー
+    // フリーズを防ぐ安全ウェイト
     function handleConfigChange() {
         if (!isActive) return;
-        
-        // 1回完全にエンジンを消滅させる
         if (recognition) {
             try { recognition.stop(); } catch(e){}
             recognition = null;
         }
-        
         clearTimeout(configTimeout);
         configTimeout = setTimeout(() => {
             if (isActive) startSpeechEngine();
-        }, 300); // 300msの間を空けて安全に再起動
+        }, 300);
     }
 
     startBtn.onclick = () => {
@@ -369,7 +326,7 @@
 
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
-            finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
+            finalSpan.innerText = ""; interimSpan.innerText = "";
             confirmedSet.clear();
             processedIndices.clear();
             lastConfirmedText = "";
