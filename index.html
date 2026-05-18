@@ -102,11 +102,13 @@
     const connText = document.getElementById('conn-text');
 
     let recognition = null;
+    let currentStream = null;
     let isActive = false;
     let restartTimer = null;
     let configTimeout = null;
     
-    // 重複カット用バッファ
+    // パフォーマンス・文字落ち対策用バッファ
+    let finalParagraphs = []; // 確定テキストの配列（DOM負荷軽減）
     let confirmedSet = new Set();
     let processedIndices = new Set();
     let lastConfirmedText = "";
@@ -149,7 +151,19 @@
         } catch (e) {}
     }
 
-    function startSpeechEngine() {
+    // 文字列の前方一致する長さを探す（Android雪だるま現象の強化対策用）
+    function getOverlapLength(str1, str2) {
+        const minLen = Math.min(str1.length, str2.length);
+        let overlap = 0;
+        for (let i = 1; i <= minLen; i++) {
+            if (str1.slice(-i) === str2.slice(0, i)) {
+                overlap = i;
+            }
+        }
+        return overlap;
+    }
+
+    async function startSpeechEngine() {
         if (!isActive || recognition) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -158,15 +172,30 @@
             return;
         }
 
+        // 明示的にマイクストリームを取得してデバイス変更と最適化を適用
+        try {
+            if (currentStream) {
+                currentStream.getTracks().forEach(t => t.stop());
+            }
+            const constraints = {
+                audio: {
+                    echoCancellation: noiseToggle.checked,
+                    noiseSuppression: noiseToggle.checked,
+                    autoGainControl: true
+                }
+            };
+            if (micSelect.value) {
+                constraints.audio.deviceId = { exact: micSelect.value };
+            }
+            currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+            console.error("マイクアクセス失敗:", err);
+        }
+
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         recognition.continuous = true; 
-
-        const selectedMicId = micSelect.value;
-        if (selectedMicId && recognition.audioTrack) {
-            recognition.audioTrack.id = selectedMicId;
-        }
 
         recognition.onstart = () => {
             updateStatus('online', "認識中：声をしっかり拾っています。");
@@ -174,64 +203,83 @@
 
         recognition.onresult = (e) => {
             let interimText = '';
+            let hasNewFinal = false;
 
             for (let i = e.resultIndex; i < e.results.length; i++) {
-                let result = e.results[i];
+                const result = e.results[i];
                 let transcript = result[0].transcript.trim();
 
                 if (transcript === "") continue;
+                const cleanText = transcript.replace(/[\s。、]/g, "");
 
                 if (result.isFinal) {
                     if (processedIndices.has(i)) continue;
+                    processedIndices.add(i);
 
-                    const cleanText = transcript.replace(/[\s。、]/g, "");
-                    
-                    // 重複ガード
-                    if (confirmedSet.has(cleanText)) {
-                        processedIndices.add(i);
-                        continue;
+                    if (confirmedSet.has(cleanText)) continue;
+
+                    // 強化版：直前確定テキストとの重複部分を柔軟にカット
+                    if (lastConfirmedText) {
+                        const cleanLast = lastConfirmedText.replace(/[\s。、]/g, "");
+                        const overlap = getOverlapLength(cleanLast, cleanText);
+                        if (overlap > 0) {
+                            // 重複部分の文字数分、生のtranscriptから削る近似処理
+                            let rawOverlap = 0;
+                            let cleanIdx = 0;
+                            for(let j = 0; j < transcript.length; j++) {
+                                if (!/[\s。、]/.test(transcript[j])) {
+                                    cleanIdx++;
+                                }
+                                if (cleanIdx > overlap) {
+                                    rawOverlap = j;
+                                    break;
+                                }
+                            }
+                            if (rawOverlap > 0 || cleanIdx <= overlap) {
+                                transcript = transcript.substring(rawOverlap || transcript.length).trim();
+                            }
+                        }
                     }
 
-                    // Android雪だるま差分吸収
-                    if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
-                        transcript = transcript.substring(lastConfirmedText.length).trim();
-                    }
-
-                    if (transcript === "") {
-                        processedIndices.add(i);
-                        continue;
-                    }
+                    if (transcript === "") continue;
 
                     confirmedSet.add(cleanText);
-                    processedIndices.add(i);
-                    lastConfirmedText = transcript;
+                    lastConfirmedText = result[0].transcript.trim(); // 元の全体を記憶
 
-                    const currentFinal = finalSpan.innerText.trim();
-                    let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
-
-                    finalSpan.innerText += separator + transcript;
-                    interimText = '';
+                    
+                    finalParagraphs.push(transcript);
+                    hasNewFinal = true;
                 } else {
-                    const cleanInterim = transcript.replace(/[\s。、]/g, "");
-                    if (!processedIndices.has(i) && !confirmedSet.has(cleanInterim)) {
+                    // 未確定時も重複バッファにあるものは表示しない
+                    if (!processedIndices.has(i) && !confirmedSet.has(cleanText)) {
                         interimText += transcript;
                     }
                 }
             }
 
-            interimSpan.innerText = interimText;
-            outputBox.scrollTop = outputBox.scrollHeight;
+            // DOM更新をバッチ化してパフォーマンスを最速化
+            if (hasNewFinal) {
+                finalSpan.textContent = finalParagraphs.join("\n");
+                interimSpan.textContent = '';
+                outputBox.scrollTop = outputBox.scrollHeight;
+            } else {
+                interimSpan.textContent = interimText;
+                // 未確定が増えた時もスクロールを追従
+                if (interimText) {
+                    outputBox.scrollTop = outputBox.scrollHeight;
+                }
+            }
         };
 
-        // Androidをフリーズさせないための最重要セーフガード
         recognition.onend = () => {
             recognition = null;
+            // メモリ解放：セッションが切れたらインデックスバッファをリセット
+            processedIndices.clear(); 
             
             if (isActive) {
                 updateStatus('connecting', "無音による一時切断。2秒後に安全に自動復帰します...");
                 clearTimeout(restartTimer);
-                // 【超重要】再起動まで2秒の間を空け、Androidのガードを完全に回避する
                 restartTimer = setTimeout(() => {
                     if (isActive) startSpeechEngine();
                 }, 2000); 
@@ -239,10 +287,11 @@
         };
 
         recognition.onerror = (ev) => {
-            // Androidが拒否エラーを出した場合は、連打せず一度エンジンを破棄
             if (ev.error === 'not-allowed') {
                 updateStatus('error', "マイク権限がありません。");
                 stopSpeechEngine();
+            } else if (ev.error === 'network') {
+                console.log("ネットワーク一時エラー。自動復帰を試みます。");
             } else {
                 console.log("SpeechRecognition error:", ev.error);
             }
@@ -272,10 +321,13 @@
             } catch(e){}
             recognition = null;
         }
-        interimSpan.innerText = "";
+        if (currentStream) {
+            currentStream.getTracks().forEach(t => t.stop());
+            currentStream = null;
+        }
+        interimSpan.textContent = "";
     }
 
-    // 設定変更時のウェイト
     function handleConfigChange() {
         if (!isActive) return;
         stopSpeechEngine();
@@ -292,6 +344,7 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
+        // 開始時は安全のため全バッファをクリア
         confirmedSet.clear();
         processedIndices.clear();
         lastConfirmedText = "";
@@ -308,7 +361,7 @@
     noiseToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
-        const text = finalSpan.innerText;
+        const text = finalSpan.textContent;
         if (!text.trim()) return;
         try {
             await navigator.clipboard.writeText(text);
@@ -321,7 +374,7 @@
     };
 
     saveBtn.onclick = () => {
-        const text = finalSpan.innerText;
+        const text = finalSpan.textContent;
         if (!text.trim()) return;
         const now = new Date();
         const timestamp = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + String(now.getMinutes()).padStart(2, '0');
@@ -338,7 +391,9 @@
 
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
-            finalSpan.innerText = ""; interimSpan.innerText = "";
+            finalSpan.textContent = ""; 
+            interimSpan.textContent = "";
+            finalParagraphs = [];
             confirmedSet.clear();
             processedIndices.clear();
             lastConfirmedText = "";
