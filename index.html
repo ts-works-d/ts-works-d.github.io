@@ -66,6 +66,13 @@
                 <option value="10">10 (最大)</option>
             </select>
         </div>
+        <div class="setting-label" style="margin-bottom: 12px;">
+            <span>フィラー削除（えー、あの等）</span>
+            <label class="switch">
+                <input type="checkbox" id="filler-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
         <div class="setting-label">
             <span>ノイズ軽減（ネイティブ自動最適化）</span>
             <label class="switch">
@@ -88,6 +95,7 @@
 <script>
     const micSelect = document.getElementById('mic-select');
     const gainSelect = document.getElementById('gain-select');
+    const fillerToggle = document.getElementById('filler-toggle'); // フィラー削除スイッチ
     const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
@@ -106,7 +114,7 @@
     let restartTimer = null;
     let configTimeout = null;
     
-    // Web Audio API用リソース（選択マイクをシステムレベルで有効化・感度ブーストする肝）
+    // Web Audio API用リソース
     let audioContext = null;
     let audioSource = null;
     let gainNode = null;
@@ -156,9 +164,7 @@
         } catch (e) {}
     }
 
-    // 選択マイクのパイプラインをWeb Audio APIでブラウザに直結する（認識しない問題を根本解決）
     async function setupAudioPipeline() {
-        // 既存ストリームとオーディオノードのクリーンアップ
         if (audioSource) { audioSource.disconnect(); audioSource = null; }
         if (gainNode) { gainNode.disconnect(); gainNode = null; }
         if (activeStream) {
@@ -170,7 +176,7 @@
             audio: {
                 echoCancellation: noiseToggle.checked,
                 noiseSuppression: noiseToggle.checked,
-                autoGainControl: false // 手動のゲイン調整を優先するためfalse
+                autoGainControl: false 
             }
         };
 
@@ -179,11 +185,9 @@
         }
 
         try {
-            // 1. 指定されたハードウェアマイクを起動
             activeStream = await navigator.mediaDevices.getUserMedia(constraints);
             await refreshDevices();
 
-            // 2. オーディオコンテキストの初期化（ユーザー操作トリガーのみ許可される）
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -191,24 +195,19 @@
                 await audioContext.resume();
             }
 
-            // 3. マイク音声をWeb Audioのルート（通り道）に接続
             audioSource = audioContext.createMediaStreamSource(activeStream);
             gainNode = audioContext.createGain();
             
-            // 画面の「感度調整」の数値を適用して増幅
             const gainMultiplier = parseFloat(gainSelect.value) || 1.0;
             gainNode.gain.setValueAtTime(gainMultiplier, audioContext.currentTime);
 
-            // ソースをゲイン（感度設定）に接続
             audioSource.connect(gainNode);
             
-            // 【重要】音声認識エンジンが反応できるように、ダミーの出力先に逃がす（これをしないとAndroid等でStreamが休止状態になります）
             const destination = audioContext.createMediaStreamDestination();
             gainNode.connect(destination);
 
         } catch (err) {
             console.error("オーディオパイプラインの構築失敗:", err);
-            // 失敗時はデフォルトフォールバック
             try {
                 activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch(e) {}
@@ -254,6 +253,14 @@
                     }
 
                     let cleanedText = transcript.trim();
+                    if (cleanedText === "") continue;
+
+                    // 【オンオフ対応】スイッチがONのときのみフィラー（えー、あの等）を除去
+                    if (fillerToggle.checked) {
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                    }
+                    
                     if (cleanedText === "") continue;
 
                     confirmedSet.add(cleanText);
@@ -325,7 +332,6 @@
             recognition = null;
         }
 
-        // 明示的な「停止」のときのみハードウェアおよびオーディオグラフを完全切断
         if (closeMic) {
             if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
             if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
@@ -342,19 +348,24 @@
 
     function handleConfigChange() {
         if (!isActive) return;
-        stopSpeechEngine(true); // パイプラインを一度綺麗にクラッシュさせてリスタート
+        stopSpeechEngine(true); 
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
         clearTimeout(configTimeout);
         configTimeout = setTimeout(async () => {
             if (isActive) {
-                updateStatus('connecting', "マイクを切り替え中...");
+                updateStatus('connecting', "設定適用中...");
                 await setupAudioPipeline();
                 startSpeechEngine();
             }
         }, 300);
     }
+
+    // フィラー削除は音声認識エンジンのリスタート（マイク切断）を伴わずに即時反映可能
+    fillerToggle.onchange = () => {
+        // バックグラウンドでフラグが切り替わるため、再起動なしでそのまま適用されます
+    };
 
     startBtn.onclick = async () => {
         isActive = true;
@@ -368,9 +379,7 @@
         
         updateStatus('connecting', "オーディオシステム起動中...");
         
-        // 1. Web Audio API とマイクストリームの物理接続を確立
         await setupAudioPipeline();
-        // 2. 音声認識エンジン始動
         startSpeechEngine();
     };
 
