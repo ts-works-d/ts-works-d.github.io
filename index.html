@@ -18,8 +18,8 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
-        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
+        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; display: none; } /* デバイス選択は不要なため非表示に */
+        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; display: none; } /* 不要な設定項目は非表示に */
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
@@ -55,18 +55,9 @@
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            <select id="mic-select">
-                <option value="">-- [認識開始]後にマイクを選択できます --</option>
-            </select>
-            <div class="setting-box">
-                <div class="setting-label">
-                    <span>ノイズ軽減（要再起動）</span>
-                    <label class="switch">
-                        <input type="checkbox" id="noise-toggle" checked>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
+            <select id="mic-select"></select>
+            <div class="setting-box"><input type="checkbox" id="noise-toggle" checked></div>
+            
             <div class="controls">
                 <button id="start">認識開始</button>
                 <button id="stop" disabled>停止</button>
@@ -87,13 +78,11 @@
 </div>
 
 <script>
-    const micSelect = document.getElementById('mic-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
     const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
-    const noiseToggle = document.getElementById('noise-toggle');
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
@@ -104,7 +93,6 @@
 
     let recognition = null;
     let isActive = false;
-    let stream = null;
     let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
@@ -132,37 +120,8 @@
         }
     }
 
-    async function refreshDevices() {
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const audioInputs = devices.filter(d => d.kind === 'audioinput');
-            const currentVal = micSelect.value;
-            micSelect.innerHTML = '';
-            
-            // Android初期ロード対策: 権限がない時は仮の選択肢を出す
-            if (audioInputs.length === 0 || audioInputs[0].label === "") {
-                const opt = document.createElement('option');
-                opt.value = "";
-                opt.text = "既定のマイク（認識開始後に選択可能）";
-                micSelect.appendChild(opt);
-                return;
-            }
-
-            audioInputs.forEach((d, i) => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId; 
-                opt.text = d.label || `マイク ${i + 1}`;
-                micSelect.appendChild(opt);
-            });
-            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
-                micSelect.value = currentVal;
-            }
-        } catch (e) { console.error(e); }
-    }
-
     function setupRecognition() {
-        // Android Chrome向けに webkitSpeechRecognition を確実に優先して掴む
+        // indexssの安定したAndroid向け認識エンジン取得ロジック
         const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
         if (!SpeechRecognition) {
             updateStatus('error', "お使いのブラウザは音声認識に対応していません。");
@@ -184,6 +143,7 @@
                 let transcript = e.results[i][0].transcript;
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
+                    // indexssのフィラー除去ロジック
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
@@ -218,7 +178,7 @@
                             console.log("再起動試行中...");
                         }
                     }
-                }, 400); // Androidのエンジン解放を待つため少しウェイトを延長
+                }, 400);
             } 
         };
         
@@ -230,13 +190,12 @@
             } else if (ev.error === 'network') {
                 updateStatus('error', "ネットワークエラーが発生しました。");
             }
-            // no-speech 等の場合は、自動的に onend が走り再起動されます
         };
         
         return recognition;
     }
 
-    async function stopMedia() {
+    function stopMedia() {
         isActive = false;
         clearTimeout(restartTimeoutId);
         
@@ -248,54 +207,33 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
         startBtn.disabled = false;
         stopBtn.disabled = true;
     }
 
-    async function startStream() {
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
-            }
-        };
-
-        // Androidではまずユーザー操作（クリック内）でストリームを取得してマイクを許可させる
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                await refreshDevices();
-            } catch (mediaError) {
-                console.warn("詳細マイク取得失敗。デフォルトマイクを試みます:", mediaError);
-                // 失敗した場合は特定のデバイス指定を外して再試行
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            }
-        }
-
-        const rec = setupRecognition();
-        if (rec) rec.start();
-    }
-
-    startBtn.onclick = async () => {
+    startBtn.onclick = () => {
         try {
             startBtn.disabled = true;
             updateStatus('connecting', "初期化中...");
             isActive = true;
-            await startStream();
-            stopBtn.disabled = false;
+            
+            // indexssのロジック: getUserMediaによるマイク重複取得を行わず、直接SpeechRecognitionを起動する
+            const rec = setupRecognition();
+            if (rec) {
+                rec.start();
+                stopBtn.disabled = false;
+            } else {
+                startBtn.disabled = false;
+            }
         } catch (e) {
             console.error(e);
-            updateStatus('error', "起動失敗。マイクの権限やHTTPS接続を確認してください。");
-            await stopMedia();
+            updateStatus('error', "起動失敗。マイクの権限を確認してください。");
+            stopMedia();
         }
     };
 
-    stopBtn.onclick = async () => {
-        await stopMedia();
+    stopBtn.onclick = () => {
+        stopMedia();
         updateStatus('', "停止しました。");
     };
 
@@ -335,33 +273,10 @@
         URL.revokeObjectURL(url);
     };
 
-    micSelect.onchange = async () => {
-        if (isActive) {
-            updateStatus('connecting', "デバイス切り替え...");
-            await stopMedia();
-            isActive = true;
-            try { await startStream(); } catch(e) { updateStatus('error', "切り替え失敗"); }
-        }
-    };
-
-    noiseToggle.onchange = async () => {
-        if (isActive) {
-            updateStatus('connecting', "ノイズ設定反映中...");
-            await stopMedia();
-            isActive = true;
-            try { await startStream(); } catch(e) { updateStatus('error', "設定反映失敗"); }
-        }
-    };
-
     clearBtn.onclick = () => { 
         if (confirm("表示されているテキストを消去しますか？")) { 
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
         } 
-    };
-
-    // 初期起動時、Androidでエラーが起きないよう安全に処理
-    window.onload = () => {
-        refreshDevices().catch(e => console.log("初期デバイス取得スキップ"));
     };
 </script>
 </body>
