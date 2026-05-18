@@ -120,17 +120,50 @@
         }
     }
 
-    // Android向けの重複除去関数
-    function eliminateDuplicate(currentText, newText) {
-        if (!currentText) return newText;
-        // 文字列の後ろから1文字ずつ削りながら、新テキストの先頭と一致する最大の重なりを探す
-        for (let i = 0; i < currentText.length; i++) {
-            let targetTail = currentText.substring(i);
-            if (newText.startsWith(targetTail)) {
-                // 重なっている部分を削った残りの文字を返す
-                return newText.substring(targetTail.length);
+    // 【超強力版】重複排除ロジック
+    // 既存テキスト全体の末尾と、新テキストの先頭に「1文字以上の重なり」があれば最大一致する部分を削る
+    function eliminateDuplicateText(currentFullText, newText) {
+        if (!currentFullText || !newText) return newText;
+
+        // 記号や改行などを除去して純粋な文字列として比較用データを準備
+        const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
+        const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
+
+        // 新しいテキストが既存テキストに完全に含まれている場合は空文字を返す（完全重複スキップ）
+        if (cleanCurrent.includes(cleanNew)) {
+            return "";
+        }
+
+        // 後方から何文字被っているかを全探索 (最大で新テキスト全体の長さまで)
+        const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
+        let overlapLength = 0;
+
+        for (let i = 1; i <= maxCheckLength; i++) {
+            const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
+            const newHead = cleanNew.substring(0, i);
+            if (currentTail === newHead) {
+                overlapLength = i; // 被っている「きれいな文字数」を記録
             }
         }
+
+        // 被りが見つかった場合、新テキストの先頭側から該当する文字の部分を物理的に削る
+        if (overlapLength > 0) {
+            let currentMatchLen = 0;
+            let cutIndex = 0;
+            // 新テキストのオリジナル文字列（記号込み）を走査し、クリーン文字数分に相当するインデックスを探す
+            for (let j = 0; j < newText.length; j++) {
+                if (!/[。？！?!\s\n]/.test(newText[j])) {
+                    currentMatchLen++;
+                }
+                if (currentMatchLen > overlapLength) {
+                    cutIndex = j;
+                    break;
+                }
+                cutIndex = j + 1;
+            }
+            return newText.substring(cutIndex);
+        }
+
         return newText;
     }
 
@@ -156,24 +189,25 @@
                 let transcript = e.results[i][0].transcript;
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
+                    
+                    // フィラー（えーっと、あの等）の除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    let currentFinal = finalSpan.innerText.trim();
+                    // 画面の確定文全体を取得して、新しい文との被りをチェック
+                    let currentFinal = finalSpan.innerText;
                     
-                    // 【Android重複対策】すでに確定している末尾の文章と、新しい文章に被りがないかチェック
-                    // 直近1フレーズ（改行区切り）を取り出して比較
-                    let sentences = currentFinal.split('\n');
-                    let lastSentence = sentences[sentences.length - 1] || "";
+                    // 【強化した重複排除処理を実行】
+                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText);
+                    cleanedText = cleanedText.trim();
                     
-                    // 重複部分を除去
-                    cleanedText = eliminateDuplicate(lastSentence.replace(/[。？！?!]/g, ""), cleanedText);
                     if (cleanedText === "") continue;
 
-                    const hasPunct = /[。？！?!]$/.test(currentFinal);
-                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    // 文末の処理
+                    const hasPunct = /[。？！?!]$/.test(currentFinal.trim());
+                    let separator = currentFinal.trim() !== "" ? (hasPunct ? "\n" : "。\n") : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
