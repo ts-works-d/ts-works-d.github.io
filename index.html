@@ -20,8 +20,7 @@
         @keyframes blink { 50% { opacity: 0.5; } }
         select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
-        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; margin-bottom: 10px; }
-        .setting-label:last-child { margin-bottom: 0; }
+        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
         #start { background: var(--primary); }
@@ -60,7 +59,7 @@
                 <option value="">-- [認識開始]後にマイクを選択できます --</option>
             </select>
             <div class="setting-box">
-                <div class="setting-label">
+                <div class="setting-label" style="margin-bottom: 12px;">
                     <span>感度調整（倍率）</span>
                     <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
                         <option value="1">1 (標準)</option>
@@ -75,7 +74,7 @@
                         <option value="10">10 (最大)</option>
                     </select>
                 </div>
-                <div class="setting-label" style="margin-top: 10px;">
+                <div class="setting-label">
                     <span>ノイズ軽減（要再起動）</span>
                     <label class="switch">
                         <input type="checkbox" id="noise-toggle" checked>
@@ -104,7 +103,7 @@
 
 <script>
     const micSelect = document.getElementById('mic-select');
-    const gainSelect = document.getElementById('gain-select'); // 追加
+    const gainSelect = document.getElementById('gain-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -149,46 +148,6 @@
         }
     }
 
-    // Android等での文字列の連続重複を検出して綺麗にカットする安全ロジック
-    function eliminateDuplicateText(currentFullText, newText) {
-        if (!currentFullText || !newText) return newText;
-
-        const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
-        const cleanNew = newText.replace(/[。檔案？！?!\s\n]/g, "");
-
-        if (cleanCurrent.includes(cleanNew)) {
-            return "";
-        }
-
-        const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
-        let overlapLength = 0;
-
-        for (let i = 1; i <= maxCheckLength; i++) {
-            const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
-            const newHead = cleanNew.substring(0, i);
-            if (currentTail === newHead) {
-                overlapLength = i;
-            }
-        }
-
-        if (overlapLength > 0) {
-            let currentMatchLen = 0;
-            let cutIndex = 0;
-            for (let j = 0; j < newText.length; j++) {
-                if (!/[。？！?!\s\n]/.test(newText[j])) {
-                    currentMatchLen++;
-                }
-                if (currentMatchLen > overlapLength) {
-                    cutIndex = j;
-                    break;
-                }
-                cutIndex = j + 1;
-            }
-            return newText.substring(cutIndex);
-        }
-        return newText;
-    }
-
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -231,19 +190,13 @@
                     
                     if (cleanedText === "") continue;
 
-                    let currentFinal = finalSpan.innerText;
-                    // Android重複防止処理
-                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
-                    if (cleanedText === "") continue;
+                    const currentFinal = finalSpan.innerText.trim();
+                    const hasPunct = /[。？！?!]$/.test(currentFinal);
+                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    if (!/[。檔案？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    const hasPunct = /[。？！?!]$/.test(currentFinal.trim());
-                    let separator = currentFullTextCleaned !== "" ? (hasPunct ? "\n" : "。\n") : "";
-                    function getCleanedTextContext() { return finalSpan.innerText.trim(); }
-                    let currentFinalStr = getCleanedTextContext();
-                    let sep = currentFinalStr !== "" ? (/[。？！?!]$/.test(currentFinalStr) ? "\n" : "。\n") : "";
-                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-
-                    finalSpan.innerText += sep + cleanedText;
+                    // バグを修正：確実に確定テキストを追加します
+                    finalSpan.innerText += separator + cleanedText;
                     addLog(cleanedText, true);
                 } else {
                     interimText += transcript;
@@ -292,18 +245,25 @@
     }
 
     async function startStream() {
-        // 元の正常に認識していたシンプルなフローを100%踏襲
-        const rec = setupRecognition();
-        if (rec) {
-            rec.start();
-            // 認識が安全に開始された直後にデバイス一覧のラベルをバックグラウンドで更新
-            setTimeout(async () => {
-                try {
-                    const d = await navigator.mediaDevices.enumerateDevices();
-                    await refreshDevices();
-                } catch(e){}
-            }, 500);
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? deviceId : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            await refreshDevices();
+        } catch (e) {
+            console.warn("マイクデバイス一覧の読み込みをスキップします");
         }
+
+        const rec = setupRecognition();
+        if (rec) rec.start();
     }
 
     startBtn.onclick = async () => {
@@ -329,7 +289,6 @@
         updateStatus('', "停止しました。");
     };
 
-    // リストボックス変更時にログを正しく出す処理
     gainSelect.onchange = () => {
         addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
     };
@@ -394,10 +353,7 @@
         } 
     };
 
-    // 読み込み時にマイクを掴む不具合（フリーズ原因）を完全に排除
-    window.onload = () => {
-        console.log("逐語録アプリケーションが準備完了しました。");
-    };
+    window.onload = refreshDevices;
 </script>
 </body>
 </html>
