@@ -104,7 +104,6 @@
 
     let recognition = null;
     let isActive = false;
-    let stream = null;
     let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
@@ -132,15 +131,13 @@
         }
     }
 
-    // Android Chrome特有の同じ言葉が繰り返し追加されるバグを排除するロジック
+    // 文字レベルでの最高精度・重複カットロジック
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
-        // 比較のために余計な記号、空白、改行を除去
         const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
         const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
 
-        // すでに既存テキストに完全に含まれている場合は重複として処理しない
         if (cleanCurrent.includes(cleanNew)) {
             return "";
         }
@@ -148,7 +145,6 @@
         const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
         let overlapLength = 0;
 
-        // 末尾と先頭の文字レベルでの被り（最長共通接頭辞・接尾辞）をチェック
         for (let i = 1; i <= maxCheckLength; i++) {
             const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
             const newHead = cleanNew.substring(0, i);
@@ -157,7 +153,6 @@
             }
         }
 
-        // 被りがある場合、新しい文章の先頭から被り文字数分を物理的に削る
         if (overlapLength > 0) {
             let currentMatchLen = 0;
             let cutIndex = 0;
@@ -176,20 +171,33 @@
         return newText;
     }
 
+    // デバイス一覧を取得・更新（マイク競合を避けるため独立して動かす）
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            
+            // 権限がない場合にマイク一覧をブラウザから強制的に引き出すため、一瞬だけ取得して即座に閉じる
+            let tempStream = null;
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const hasLabels = devices.some(d => d.kind === 'audioinput' && d.label !== "");
+                if (!hasLabels && isActive) {
+                    tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+            } catch(e) { console.log("一時ストリーム取得スキップ"); }
+
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioInputs = devices.filter(d => d.kind === 'audioinput');
             const currentVal = micSelect.value;
             micSelect.innerHTML = '';
             
-            // 権限がない初期状態や、モバイルブラウザ向けの安全対策
             if (audioInputs.length === 0 || audioInputs[0].label === "") {
                 const opt = document.createElement('option');
-                opt.value = currentVal || "";
+                opt.value = "";
                 opt.text = "既定のマイク（認識開始後に選択可能）";
                 micSelect.appendChild(opt);
+                // 一時ストリームの解放
+                if (tempStream) tempStream.getTracks().forEach(t => t.stop());
                 return;
             }
 
@@ -199,9 +207,13 @@
                 opt.text = d.label || `マイク ${i + 1}`;
                 micSelect.appendChild(opt);
             });
+
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
+
+            // 一時ストリームの完全解放（音声認識エンジンにマイクを譲る）
+            if (tempStream) tempStream.getTracks().forEach(t => t.stop());
         } catch (e) { console.error(e); }
     }
 
@@ -214,7 +226,9 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
+        recognition.onstart = () => {
+            if (isActive) updateStatus('online', "認識中：お話しください。");
+        };
         
         recognition.onresult = (e) => {
             let interimText = '';
@@ -229,7 +243,7 @@
 
                     let currentFinal = finalSpan.innerText;
                     
-                    // Android重複対策ロジックを実行
+                    // Android重複カット
                     cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
                     if (cleanedText === "") continue;
 
@@ -257,7 +271,7 @@
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
                     }
-                }, 300); // モバイルデバイスの解放ラグを考慮して300msに調整
+                }, 250);
             } 
         };
         
@@ -277,33 +291,26 @@
         clearTimeout(restartTimeoutId);
         
         if (recognition) { 
+            recognition.ononstart = null;
             recognition.onend = null; 
             recognition.onerror = null;
+            recognition.onresult = null;
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
     }
 
     async function startStream() {
-        const deviceId = micSelect.value;
-        const constraints = {
-            audio: {
-                deviceId: deviceId ? { exact: deviceId } : undefined,
-                echoCancellation: true,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
-            }
-        };
-
-        // マイクストリームの取得（ここで初めてブラウザの権限許可を求める）
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        // 許可が得られたこのタイミングで、利用可能なマイク一覧をセレクトボックスに復活させる
+        // デバイス一覧を最新化しつつ競合ストリームを排除
         await refreshDevices();
 
         const rec = setupRecognition();
-        if (rec) rec.start();
+        if (rec) {
+            // ノイズ軽減などの追加設定はブラウザのSpeechRecognition標準の処理系に委ねる
+            rec.start();
+        }
     }
 
     startBtn.onclick = async () => {
@@ -322,10 +329,7 @@
     };
 
     stopBtn.onclick = async () => {
-        startBtn.disabled = true;
         await stopMedia();
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
         updateStatus('', "停止しました。");
     };
 
@@ -389,9 +393,8 @@
         } 
     };
 
-    // 初期読み込み時は安全な仮のオプションを生成してクラッシュを防ぐ
     window.onload = () => {
-        refreshDevices().catch(e => console.log("初期化待機"));
+        refreshDevices().catch(e => console.log("初期化スキップ"));
     };
 </script>
 </body>
