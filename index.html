@@ -123,6 +123,9 @@
     let stream = null;
     let restartTimeoutId = null;
 
+    // Androidの多重ループ・ダブり書き込みを制御するための「最後に処理した確定文のID」管理
+    let lastProcessedFinalIndex = -1;
+
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
         entry.className = 'log-entry';
@@ -146,50 +149,6 @@
             connText.innerText = "音声認識：待機中"; 
             statusDisp.style.background = "#fff3cd"; 
         }
-    }
-
-    // Android特有の「重複ダブり」「文字落ち」をミリ単位で判定・相殺するロジック
-    function eliminateDuplicateText(currentFullText, newText) {
-        if (!currentFullText || !newText) return newText;
-
-        // 比較用に記号や改行を除去したクリーンな文字列を作成
-        const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
-        const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
-
-        // 新しい文章が既に含まれている場合は完全にダブりなので追加しない
-        if (cleanCurrent.includes(cleanNew)) {
-            return "";
-        }
-
-        // お尻の部分と頭の部分の重なり（最長一致）を調査
-        const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
-        let overlapLength = 0;
-
-        for (let i = 1; i <= maxCheckLength; i++) {
-            const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
-            const newHead = cleanNew.substring(0, i);
-            if (currentTail === newHead) {
-                overlapLength = i;
-            }
-        }
-
-        // 重なりが見つかった場合、元の記号を含んだ形式のnewTextから該当文字数分を正確にカット
-        if (overlapLength > 0) {
-            let currentMatchLen = 0;
-            let cutIndex = 0;
-            for (let j = 0; j < newText.length; j++) {
-                if (!/[。？！?!\s\n]/.test(newText[j])) {
-                    currentMatchLen++;
-                }
-                if (currentMatchLen > overlapLength) {
-                    cutIndex = j;
-                    break;
-                }
-                cutIndex = j + 1;
-            }
-            return newText.substring(cutIndex);
-        }
-        return newText;
     }
 
     async function refreshDevices() {
@@ -221,27 +180,33 @@
         recognition.interimResults = true;
         recognition.continuous = true;
 
-        recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
+        recognition.onstart = () => {
+            updateStatus('online', "認識中：お話しください。");
+            lastProcessedFinalIndex = -1; // 起動時にインデックスを初期化
+        };
         
         recognition.onresult = (e) => {
             let interimText = '';
+            
+            // ループ処理を厳格化：Androidの5重ダブりを防ぐため、確定と暫定を完全に分離
             for (let i = e.resultIndex; i < e.results.length; i++) {
-                let transcript = e.results[i][0].transcript;
-                if (e.results[i].isFinal) {
+                let result = e.results[i];
+                let transcript = result[0].transcript;
+
+                if (result.isFinal) {
+                    // 【最重要】すでに処理した確定インデックス（発言ID）なら、絶対に重複処理をしない（Android5重ダブり対策）
+                    if (i <= lastProcessedFinalIndex) continue;
+                    lastProcessedFinalIndex = i;
+
                     let cleanedText = transcript.trim();
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    let currentFinal = finalSpan.innerText;
-                    
-                    // Android重複防止フィルタの適用（ダブりと文字落ちを同時に防ぐ）
-                    cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
-                    if (cleanedText === "") continue;
-
-                    const hasPunct = /[。？！?!]$/.test(currentFinal.trim());
-                    let separator = currentFinal.trim() !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    const currentFinal = finalSpan.innerText.trim();
+                    const hasPunct = /[。？！?!]$/.test(currentFinal);
+                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
                     finalSpan.innerText += separator + cleanedText;
@@ -250,6 +215,7 @@
                     interimText += transcript;
                 }
             }
+            
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
                 addLog(interimText, false);
@@ -304,7 +270,7 @@
         };
 
         try {
-            // Androidでの権限ブロック回避とデバイス一覧取得のために一瞬だけマイクを起動
+            // Androidのマイク権限ロックを安全に解除しつつデバイス一覧を取得
             stream = await navigator.mediaDevices.getUserMedia(constraints);
             await refreshDevices();
             
@@ -404,6 +370,7 @@
     clearBtn.onclick = () => { 
         if (confirm("表示されているテキストを消去しますか？")) { 
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
+            lastProcessedFinalIndex = -1;
         } 
     };
 
