@@ -114,7 +114,7 @@
     let restartTimer = null;
     let configTimeout = null;
     
-    // Web Audio API（デバイス切り替え・ダミー接続用）
+    // Web Audio API
     let audioContext = null;
     let audioSource = null;
     let gainNode = null;
@@ -164,7 +164,7 @@
         }
     }
 
-    // マイクデバイスの初期化（※挙動を簡素化しエラーを防ぐ）
+    // マイクの初期化および感度・ノイズ軽減処理をバインド
     async function setupAudioPipeline() {
         if (audioSource) { try{audioSource.disconnect();}catch(e){} audioSource = null; }
         if (gainNode) { try{gainNode.disconnect();}catch(e){} gainNode = null; }
@@ -199,10 +199,13 @@
             audioSource = audioContext.createMediaStreamSource(activeStream);
             gainNode = audioContext.createGain();
             
+            // 画面上の感度調整（倍率）を適用
             const gainMultiplier = parseFloat(gainSelect.value) || 1.0;
             gainNode.gain.setValueAtTime(gainMultiplier, audioContext.currentTime);
 
             audioSource.connect(gainNode);
+            
+            // 音声データをWeb Audioパイプラインに流しつつ、Androidの省電力切断も防止
             const destination = audioContext.createMediaStreamDestination();
             gainNode.connect(destination);
 
@@ -216,7 +219,7 @@
         }
     }
 
-    // indexssベースに全面修正した音声認識コアロジック
+    // SpeechRecognitionの開始（PC環境・Android環境両対応）
     function startSpeechEngine() {
         if (!isActive) return;
 
@@ -246,7 +249,7 @@
                     if (e.results[i].isFinal) {
                         let cleanedText = transcript.trim();
 
-                        // 【オンオフ対応】フィラー（えー、あの）削除処理
+                        // フィラー（えー、あの）削除処理
                         if (fillerToggle.checked) {
                             const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                             cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
@@ -254,7 +257,7 @@
                         
                         if (cleanedText === "") continue;
 
-                        // indexss.html の確実なテキスト結合ロジックを適用
+                        // indexssベースの高レスポンス結合ロジック（Androidの無限重複増殖バグを完全回避）
                         const currentFinal = finalSpan.textContent.trim();
                         let separator = currentFinal !== "" ? "。\n" : "";
                         if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
@@ -272,7 +275,7 @@
                 }
             };
 
-            // スマホの無音・タイムアウトによる切断を素早くリスタート
+            // 無音タイムアウト時の自動リスタート
             recognition.onend = () => {
                 recognition = null;
                 if (isActive) {
@@ -354,7 +357,6 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        
         updateStatus('connecting', "初期化中...");
         
         try {
@@ -412,9 +414,11 @@
 
     window.onload = async () => {
         try {
-            const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            await refreshDevices();
-            initStream.getTracks().forEach(t => t.stop()); 
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                await refreshDevices();
+                initStream.getTracks().forEach(t => t.stop()); 
+            }
         } catch(e){
             updateStatus('', "「認識開始」を押してマイクを有効にしてください。");
         }
