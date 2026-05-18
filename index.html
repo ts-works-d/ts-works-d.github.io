@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>逐語録 Pro - Zero Drop (ボーカル抽出特化・モバイル対応完全版)</title>
+    <style>
+        :root { --bg: #0d1117; --text: #c9d1d9; --accent: #58a6ff; --border: #30363d; --danger: #f85149; --success: #238636; --warning: #ffc107; --info: #17a2b8; --secondary: #6c757d; }
+        body { font-family: -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; display: flex; flex-direction: column; height: 100vh; }
+        .toolbar { background: #161b22; padding: 10px 15px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+        .tool-group { display: flex; align-items: center; gap: 5px; }
+        label { font-size: 11px; color: #8b949e; }
+        button, select { background: #21262d; color: var(--text); border: 1px solid var(--border); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        #btn-start { background: var(--success); color: white; border: none; font-weight: bold; }
+        #btn-stop { background: var(--danger); color: white; border: none; }
+        .filter-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #adbac7; background: #222; padding: 5px 10px; border-radius: 20px; border: 1px solid #444; }
+        
+        .workspace { flex: 1; display: flex; overflow: hidden; }
+        .main-content { flex: 1; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--border); }
+        
+        #log-screen { flex: 1; padding: 20px 30px; overflow-y: auto; font-size: 18px; line-height: 1.6; border-bottom: 1px solid var(--border); background: #0d1117; }
+        #interim-area { padding: 15px 30px; min-height: 3em; background: #0d1117; font-size: 18px; line-height: 1.6; }
+        
+        .block { margin-bottom: 0.8em; border-left: 2px solid var(--accent); padding-left: 12px; min-height: 1.6em; word-break: break-all; white-space: pre-wrap; }
+        .interim { color: #8b949e; font-style: italic; }
+        
+        .log-panel { width: 300px; background: #161b22; display: flex; flex-direction: column; box-sizing: border-box; }
+        .log-panel-title { padding: 10px 15px; font-size: 12px; font-weight: bold; border-bottom: 1px solid var(--border); color: #8b949e; text-align: center; }
+        .log-area { flex: 1; padding: 15px; font-family: 'Courier New', Courier, monospace; font-size: 11px; color: #39ff14; overflow-y: auto; box-sizing: border-box; line-height: 1.4; }
+        .log-entry { margin-bottom: 6px; border-left: 2px solid #333; padding-left: 6px; word-break: break-all; }
+        .log-time { color: #8b949e; margin-right: 5px; }
+
+        .monitor { background: #010409; padding: 8px 20px; border-top: 1px solid var(--border); }
+        .meter-bg { height: 3px; background: #333; border-radius: 2px; margin: 5px 0; }
+        #meter-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.1s ease-out; }
+        #status-bar { font-size: 10px; color: #6e7681; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <div class="tool-group">
+        <label>入力:</label>
+        <select id="mic-select"><option>読み込み中...</option></select>
+    </div>
+    <div class="tool-group">
+        <label>感度:</label>
+        <select id="boost-select">
+            <option value="1.0">1.0</option>
+            <option value="2.0" selected>2.0</option>
+            <option value="4.0">4.0</option>
+            <option value="8.0">8.0</option>
+            <option value="12.0">12.0</option>
+        </select>
+    </div>
+    <div class="filter-toggle">
+        <input type="checkbox" id="bgm-filter" checked>
+        <label for="bgm-filter">声のみ抽出 (ノイズ除去)</label>
+    </div>
+    <button id="btn-start" disabled>開始</button>
+    <button id="btn-stop" disabled>停止</button>
+    <div style="margin-left: auto; display: flex; gap: 8px;">
+        <button onclick="resetPermissions()">権限リセット</button>
+        <button onclick="copyAll()">コピー</button>
+        <button onclick="saveAll()" style="background: var(--success); border: none;">保存</button>
+        <button onclick="clearAll()" style="color: var(--danger);">クリア</button>
+    </div>
+</div>
+
+<div class="workspace">
+    <div class="main-content">
+        <div id="log-screen"></div>
+        <div id="interim-area">
+            <div id="active-line" class="block interim">ここに認識結果が表示されます...</div>
+        </div>
+    </div>
+    <div class="log-panel">
+        <div class="log-panel-title">認識中データストリーム (最新50件)</div>
+        <div id="log-area" class="log-area"></div>
+    </div>
+</div>
+
+<div class="monitor">
+    <div id="status-bar">
+        <span id="engine-status">READY</span>
+        <span id="mode-status" style="color: var(--accent);">VOCAL EXTRACTOR + STREAM LOG ACTIVE</span>
+    </div>
+    <div class="meter-bg"><div id="meter-fill"></div></div>
+</div>
+
+<script>
+    let recognition = null;
+    let isRunning = false;
+    let audioCtx = null, stream = null, source = null, analyser = null;
+    let gainNode = null, bHighPass = null, bPeaking = null;
+    let animationFrameId = null;
+    let restartTimeoutId = null;
+    let multiplier = 2.0;
+
+    function resetPermissions() { window.location.reload(); }
+
+    async function init() {
+        // 非セキュア環境（スマホからのIPアドレス直接接続など）の警告表示
+        if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            alert("【警告】非HTTPS環境（IPアドレス直接接続など）では、スマホのブラウザ仕様によりマイクや音声認識機能が強制遮断されます。PCのlocalhostで試すか、HTTPS環境を構築してください。");
+        }
+
+        try {
+            const temp = await navigator.mediaDevices.getUserMedia({ audio: true });
+            temp.getTracks().forEach(t => t.stop());
+            await refreshDevices();
+            document.getElementById('btn-start').disabled = false;
+        } catch (e) { 
+            document.getElementById('engine-status').innerText = "MIC ERROR"; 
+            console.error("マイク初期化エラー:", e);
+        }
+    }
+
+    async function refreshDevices() {
+        const sel = document.getElementById('mic-select');
+        try {
+            const devs = await navigator.mediaDevices.enumerateDevices();
+            const currentVal = sel.value;
+            sel.innerHTML = '';
+            devs.filter(d => d.kind === 'audioinput').forEach((d, i) => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.text = d.label || `Mic ${i + 1}`;
+                sel.appendChild(opt);
+            });
+            if(currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+                sel.value = currentVal;
+            }
+        } catch(e) { console.error(e); }
+    }
+
+    function addStreamLog(text, isFinal) {
+        const logArea = document.getElementById('log-area');
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        const timeStr = new Date().toLocaleTimeString();
+        entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${isFinal ? '<b>[確定]</b> ' : ''}${text}</span>`;
+        logArea.appendChild(entry);
+        logArea.scrollTop = logArea.scrollHeight;
+        if (logArea.childNodes.length > 50) logArea.removeChild(logArea.firstChild);
+    }
+
+    function addFinalBlock(text) {
+        let cleanedText = text.trim();
+        if (!cleanedText) return;
+
+        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+        if (cleanedText === "") return;
+
+        const screen = document.getElementById('log-screen');
+        
+        if (screen.lastElementChild && (screen.lastElementChild.innerText.trim() === cleanedText || screen.lastElementChild.innerText.trim() === cleanedText + "。")) return;
+
+        const newBlock = document.createElement('div');
+        newBlock.className = 'block';
+
+        const hasPunctuation = /[。？！\?\!]$/.test(cleanedText);
+        newBlock.innerText = cleanedText + (hasPunctuation ? "" : "。");
+        
+        screen.appendChild(newBlock);
+        addStreamLog(cleanedText, true);
+
+        requestAnimationFrame(() => {
+            screen.scrollTop = screen.scrollHeight;
+        });
+    }
+
+    function setupRecognition() {
+        const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!Speech) {
+            alert("このブラウザ・端末は音声認識（SpeechRecognition）に対応していません。Android Chrome、またはPC環境でお試しください。");
+            return null;
+        }
+
+        const rec = new Speech();
+        rec.lang = 'ja-JP';
+        rec.continuous = true;
+        rec.interimResults = true;
+
+        rec.onstart = () => {
+            document.getElementById('engine-status').innerText = "LIVE";
+        };
+
+        rec.onresult = (e) => {
+            const activeLine = document.getElementById('active-line');
+            let interimStr = "";
+
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                if (e.results[i].isFinal) {
+                    addFinalBlock(e.results[i][0].transcript);
+                } else {
+                    interimStr += e.results[i][0].transcript;
+                }
+            }
+            
+            const nextText = interimStr || "...";
+            if (activeLine.innerText !== nextText) {
+                activeLine.innerText = nextText;
+                if (interimStr.trim() !== "") {
+                    addStreamLog(interimStr, false);
+                }
+            }
+        };
+
+        rec.onend = () => {
+            if (isRunning) {
+                clearTimeout(restartTimeoutId);
+                restartTimeoutId = setTimeout(() => {
+                    if (isRunning && recognition) {
+                        try { recognition.start(); } catch(err) { console.warn("再起動失敗:", err); }
+                    }
+                }, 300);
+            }
+        };
+
+        rec.onerror = (ev) => {
+            if (ev.error !== 'no-speech') console.warn("認識エラー:", ev.error);
+            if (ev.error === 'not-allowed') {
+                document.getElementById('engine-status').innerText = "BLOCKED";
+                alert("マイクの権限、またはセキュア接続(HTTPS)の制限により音声認識が拒否されました。");
+            }
+        };
+
+        recognition = rec;
+        return rec;
+    }
+
+    function updateParams() {
+        if (!audioCtx || !gainNode || !bHighPass || !bPeaking) return;
+        const t = audioCtx.currentTime;
+        
+        gainNode.gain.setTargetAtTime(multiplier, t, 0.05);
+        
+        const filterActive = document.getElementById('bgm-filter').checked;
+        if (filterActive) {
+            bHighPass.frequency.setTargetAtTime(150, t, 0.05); 
+            bPeaking.frequency.setTargetAtTime(1200, t, 0.05); 
+            bPeaking.Q.setTargetAtTime(0.5, t, 0.05);          
+            bPeaking.gain.setTargetAtTime(4, t, 0.05);         
+        } else {
+            bHighPass.frequency.setTargetAtTime(10, t, 0.05);
+            bPeaking.gain.setTargetAtTime(0, t, 0.05);
+        }
+    }
+
+    async function stopMedia() {
+        isRunning = false;
+        clearTimeout(restartTimeoutId);
+        if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
+
+        if (recognition) {
+            recognition.onend = null;
+            try { recognition.stop(); } catch(e){}
+            recognition = null;
+        }
+        if (bPeaking) { try { bPeaking.disconnect(); } catch(e){} bPeaking = null; }
+        if (bHighPass) { try { bHighPass.disconnect(); } catch(e){} bHighPass = null; }
+        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
+        if (source) { try { source.disconnect(); } catch(e){} source = null; }
+        if (analyser) { try { analyser.disconnect(); } catch(e){} analyser = null; }
+        if (audioCtx) { 
+            // 完全にCloseせず、再利用可能なようにクリアのみ実施するか、モバイル対策としてクローズ
+            try { await audioCtx.close(); } catch(e){} 
+            audioCtx = null; 
+        }
+        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
+    }
+
+    function updateVolumeMeter() {
+        if (!isRunning || !analyser) return;
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(dataArray);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        
+        const meterFill = document.getElementById('meter-fill');
+        meterFill.style.width = Math.min(100, avg * 4) + "%"; 
+        animationFrameId = requestAnimationFrame(updateVolumeMeter);
+    }
+
+    async function startStream() {
+        const deviceId = document.getElementById('mic-select').value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? { exact: deviceId } : undefined,
+                echoCancellation: true,
+                noiseSuppression: true, 
+                autoGainControl: true
+            }
+        };
+
+        // 【モバイル最優先対策】非同期処理が入る前にAudioContextの状態を確認・復帰
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioCtx.state === 'suspended') {
+            await audioCtx.resume();
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        await refreshDevices();
+
+        const rec = setupRecognition();
+        if (rec) rec.start();
+
+        source = audioCtx.createMediaStreamSource(stream);
+        
+        gainNode = audioCtx.createGain();
+        bHighPass = audioCtx.createBiquadFilter(); bHighPass.type = "highpass";
+        bPeaking = audioCtx.createBiquadFilter(); bPeaking.type = "peaking";
+        analyser = audioCtx.createAnalyser(); analyser.fftSize = 256; 
+
+        source.connect(gainNode).connect(bHighPass).connect(bPeaking).connect(analyser);
+        
+        updateParams();
+        updateVolumeMeter();
+    }
+
+    document.getElementById('btn-start').onclick = async () => {
+        try {
+            document.getElementById('btn-start').disabled = true;
+            document.getElementById('engine-status').innerText = "CONNECTING";
+            isRunning = true;
+            
+            // 【最重要】タップ・クリックイベントの直系スコープ内でAudioContextを即時生成/再開
+            // これによりモバイルブラウザの自動再生・音声ブロック仕様を完全に回避します
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume();
+            }
+
+            multiplier = parseFloat(document.getElementById('boost-select').value);
+            await startStream();
+            
+            document.getElementById('btn-stop').disabled = false;
+        } catch (err) {
+            console.error(err);
+            document.getElementById('engine-status').innerText = "ERROR";
+            document.getElementById('btn-start').disabled = false;
+            isRunning = false;
+        }
+    };
+
+    document.getElementById('btn-stop').onclick = async () => {
+        document.getElementById('btn-stop').disabled = true;
+        await stopMedia();
+        
+        document.getElementById('btn-start').disabled = false;
+        document.getElementById('meter-fill').style.width = "0%";
+        document.getElementById('engine-status').innerText = "STOPPED";
+        document.getElementById('active-line').innerText = "停止中";
+    };
+
+    document.getElementById('boost-select').onchange = () => {
+        multiplier = parseFloat(document.getElementById('boost-select').value);
+        updateParams();
+    };
+
+    document.getElementById('bgm-filter').onchange = () => {
+        updateParams();
+    };
+
+    document.getElementById('mic-select').onchange = async () => {
+        if (isRunning) {
+            document.getElementById('engine-status').innerText = "RECONNECTING";
+            await stopMedia();
+            isRunning = true;
+            await startStream();
+        }
+    };
+
+    function clearAll() { 
+        if(!confirm("表示されているテキストとログを消去しますか？")) return;
+        document.getElementById('log-screen').innerHTML = ''; 
+        document.getElementById('log-area').innerHTML = ''; 
+        document.getElementById('active-line').innerText = "...";
+    }
+    
+    function copyAll() {
+        const text = Array.from(document.querySelectorAll('#log-screen .block')).map(b => b.innerText).join('\n');
+        if (!text.trim()) {
+            alert("コピーするテキストがありません。");
+            return;
+        }
+        navigator.clipboard.writeText(text).then(() => {
+            const originalText = document.getElementById('engine-status').innerText;
+            document.getElementById('engine-status').innerText = "COPIED!";
+            setTimeout(() => document.getElementById('engine-status').innerText = originalText, 1500);
+        }).catch(err => {
+            console.error("コピー失敗:", err);
+            alert("コピーに失敗しました。");
+        });
+    }
+
+    function saveAll() {
+        const text = Array.from(document.querySelectorAll('#log-screen .block')).map(b => b.innerText).join('\n');
+        if (!text.trim()) {
+            alert("保存するテキストがありません。");
+            return;
+        }
+        
+        const now = new Date();
+        const timestamp = now.getFullYear() + 
+            String(now.getMonth() + 1).padStart(2, '0') + 
+            String(now.getDate()).padStart(2, '0') + '_' + 
+            String(now.getHours()).padStart(2, '0') + 
+            String(now.getMinutes()).padStart(2, '0') + 
+            String(now.getSeconds()).padStart(2, '0');
+        
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `逐語録_${timestamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    window.onload = init;
+</script>
+</body>
+</html>
