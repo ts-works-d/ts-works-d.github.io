@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（フル機能・Edge対応・安定版）</title>
+    <title>逐語録（フル機能・Chrome/Edge対応・安定完成版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -207,7 +207,7 @@
             outputBox.scrollTop = outputBox.scrollHeight;
         };
         
-        // クラッシュ防止：onend時の再起動に300msの猶予（安全弁）を持たせる
+        // クラッシュ防止：onend時の再起動に300msの猶予を持たせる
         rec.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
@@ -219,8 +219,13 @@
             } 
         };
         
+        // 【修正点】無音エラー(no-speech)発生時も正常に自動再起動ルートへ逃がす処理を追加
         rec.onerror = (ev) => { 
-            if (ev.error !== 'no-speech') console.warn("認識エラー:", ev.error); 
+            if (ev.error === 'no-speech') {
+                try { rec.stop(); } catch(e){}
+            } else {
+                console.warn("認識エラー:", ev.error); 
+            }
         };
         
         recognition = rec;
@@ -228,7 +233,6 @@
     }
 
     async function stopMedia() {
-        // タイマーやループの全クリア
         isActive = false;
         clearTimeout(restartTimeoutId);
         if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
@@ -244,7 +248,6 @@
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
-    // メイン描画ループ（ScriptProcessorを使わないので超軽量）
     function updateVolumeMeter() {
         if (!isActive || !analyser) return;
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -259,7 +262,7 @@
         const deviceId = micSelect.value;
         const constraints = {
             audio: {
-//                deviceId: deviceId ? { exact: deviceId } : undefined,
+                // 【修正点】exact を廃止し、デバイスID指定の競合エラーを回避
                 deviceId: deviceId ? deviceId : undefined,
                 echoCancellation: true,
                 noiseSuppression: noiseToggle.checked,
@@ -276,11 +279,9 @@
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         source = audioCtx.createMediaStreamSource(stream);
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256; // メーター用なので小さくして負荷を激減させる
+        analyser.fftSize = 256;
 
         source.connect(analyser);
-        
-        // メーター駆動開始
         updateVolumeMeter();
     }
 
@@ -300,7 +301,7 @@
     };
 
     stopBtn.onclick = async () => {
-        startBtn.disabled = true; // 連打防止
+        startBtn.disabled = true;
         await stopMedia();
         startBtn.disabled = false;
         stopBtn.disabled = true;
@@ -308,7 +309,6 @@
         updateStatus('', "停止しました。");
     };
 
-    // コピー機能
     copyBtn.onclick = async () => {
         const text = finalSpan.innerText;
         if (!text.trim()) {
@@ -326,7 +326,6 @@
         }
     };
 
-    // 保存機能
     saveBtn.onclick = () => {
         const text = finalSpan.innerText;
         if (!text.trim()) {
