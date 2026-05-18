@@ -120,6 +120,7 @@
 
     let recognition = null;
     let isActive = false;
+    let stream = null;
     let restartTimeoutId = null;
 
     function addLog(text, isFinal) {
@@ -189,7 +190,6 @@
                     
                     if (cleanedText === "") continue;
 
-                    // タイポ・変数のスペルミスを完全にクリアに修正
                     const currentFinal = finalSpan.innerText.trim();
                     const hasPunct = /[。？！?!]$/.test(currentFinal);
                     let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
@@ -240,21 +240,37 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
+        if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
     }
 
     async function startStream() {
-        // Androidで無音化（表示しなくなるバグ）を避けるため、生マイクの取得処理(getUserMedia)を完全排除
-        const rec = setupRecognition();
-        if (rec) {
-            rec.start();
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? deviceId : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+
+        try {
+            // 【最重要】Androidでマイクの使用許可（ロック解除）を得るために一度だけストリームを取得
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            await refreshDevices();
             
-            // 認識開始後に安全にデバイス一覧のラベルを更新（競合を起こさないバックグラウンド処理）
-            setTimeout(async () => {
-                try {
-                    await refreshDevices();
-                } catch(e){}
-            }, 600);
+            // 【競合回避】デバイス一覧を取得できたら、音声認識が動く前に一度マイクストリームのトラックを完全に停止してブラウザに返却する
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+        } catch (e) {
+            console.warn("マイク権限の取得またはデバイス一覧読み込みをスキップします", e);
         }
+
+        // クリーンになった状態で音声認識エンジンをスタート
+        const rec = setupRecognition();
+        if (rec) rec.start();
     }
 
     startBtn.onclick = async () => {
@@ -344,10 +360,7 @@
         } 
     };
 
-    // 初期起動時のフリーズを防ぐため空関数化
-    window.onload = () => {
-        console.log("アプリケーション準備完了");
-    };
+    window.onload = refreshDevices;
 </script>
 </body>
 </html>
