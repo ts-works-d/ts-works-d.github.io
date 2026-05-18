@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（全画面突合ガード・重複完全根絶版）</title>
+    <title>逐語録（Android最速ローテーション・ダブり完全消滅版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（全画面突合ガード・重複完全根絶版）</h2>
+            <h2>逐語録（Android最速ローテーション・ダブり完全消滅版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -120,9 +120,10 @@
 
     let recognition = null;
     let isActive = false;
-    
-    // Androidの偽装再送を完全に見破るための、インデックス・文末の厳格な二重壁
-    let highestLoggedIndex = -1;
+    let restartTimeout = null;
+
+    // Android端末かどうかの厳格な判定
+    const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -138,7 +139,7 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：常時接続中"; 
+            connText.innerText = isAndroid ? "音声認識：高精度ローテーション稼働中" : "音声認識：常時接続中"; 
             statusDisp.style.background = "#d4edda"; 
         } else if(type === 'error') { 
             connText.innerText = "音声認識：停止中"; 
@@ -181,7 +182,10 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true; // 常時接続でタイムラグを撲滅
+
+        // 【大ダブりバグの元凶を断つ設定】
+        // Androidは重複再送を防ぐため単発モード(false)化、PCは安定しているので常時接続(true)
+        recognition.continuous = !isAndroid;
 
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
@@ -189,42 +193,25 @@
         }
 
         recognition.onstart = () => {
-            updateStatus('online', "マイク常時接続中：お話しください。");
+            updateStatus('online', "システム稼働中：お話しください。");
         };
 
         recognition.onresult = (e) => {
             let interimText = '';
-            const wholeScreenText = finalSpan.innerText; // 現在画面にある全テキストを取得
+            let shouldCycleAndroid = false;
 
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let result = e.results[i];
                 let transcript = result[0].transcript.trim();
 
-                // フィラー（えー、あの）をリアルタイムで確実に削ぎ落とす
+                // フィラー（えー、あの）をリアルタイムで確実に削除
                 const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                 transcript = transcript.replace(fillerRegex, "").trim();
 
                 if (transcript === "") continue;
 
-                // 公式に確定（isFinal）したデータのみを処理
                 if (result.isFinal) {
-                    if (i <= highestLoggedIndex) continue;
-
-                    // 【最強のダブり防御壁：画面内全文字列スキャン】
-                    // 新しく届いたテキストが、すでに画面内に丸ごと含まれている（ダブり再送）なら、物理的に絶対に挿入しない
-                    if (wholeScreenText.includes(transcript)) {
-                        continue;
-                    }
-
-                    // 念のため、文末の直近5文字程度が重複して送られてきた場合も弾くガード
-                    const lastFewChars = wholeScreenText.replace(/[\s。、]/g, "").slice(-6);
-                    if (lastFewChars.length >= 3 && transcript.replace(/[\s。、]/g, "").startsWith(lastFewChars)) {
-                        continue;
-                    }
-
-                    highestLoggedIndex = i; // ポインタを更新
-
-                    // 画面へ無加工で愚直に出力（文字落ちの発生を完全に遮断）
+                    // 画面へ無加工で最短出力（時間や文字列による間引きをせず、文字落ちを完全根絶）
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
@@ -232,11 +219,13 @@
                     finalSpan.innerText += separator + transcript;
                     addLog(transcript, true);
                     interimText = '';
-                } else {
-                    // 未確定テキストは、画面内にすでに無い文字だけをプレビューに回す（プレビューのダブりも防止）
-                    if (i > highestLoggedIndex && !wholeScreenText.includes(transcript)) {
-                        interimText += transcript;
+
+                    // Androidの場合、1つの確定が出たら即座にバッファクリアのための再起動フラグを立てる
+                    if (isAndroid) {
+                        shouldCycleAndroid = true;
                     }
+                } else {
+                    interimText += transcript;
                 }
             }
 
@@ -245,12 +234,22 @@
                 addLog(interimText, false);
             }
             outputBox.scrollTop = outputBox.scrollHeight;
+
+            // Androidで確定が出た瞬間、stop()を呼び出して古いバッファを強制廃棄（ラグを最小化）
+            if (shouldCycleAndroid && recognition) {
+                interimSpan.innerText = "";
+                try { recognition.stop(); } catch(e){}
+            }
         };
 
         recognition.onend = () => {
             recognition = null;
+            // ユーザーが停止を押していない場合、10ミリ秒（最速）で次の認識を立ち上げる
             if (isActive) {
-                setTimeout(() => { if (isActive) startSpeechEngine(); }, 100);
+                clearTimeout(restartTimeout);
+                restartTimeout = setTimeout(() => {
+                    if (isActive) startSpeechEngine();
+                }, 10); // タイムラグを感じさせない超高速ローテーション
             }
         };
 
@@ -270,6 +269,7 @@
 
     function stopSpeechEngine() {
         isActive = false;
+        clearTimeout(restartTimeout);
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
@@ -284,7 +284,6 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        highestLoggedIndex = -1;
         updateStatus('connecting', "マイクを初期化中...");
         startSpeechEngine();
     };
@@ -336,7 +335,6 @@
     clearBtn.onclick = () => {
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-            highestLoggedIndex = -1;
         }
     };
 
