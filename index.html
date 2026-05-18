@@ -151,8 +151,8 @@
         }
     }
 
+    // デバイス一覧の更新（Androidでも確実に取得できるようにタイミングを最適化）
     async function refreshDevices() {
-        if (isAndroid) return;
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
             const devices = await navigator.mediaDevices.enumerateDevices();
@@ -169,7 +169,7 @@
             if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("デバイス一覧取得失敗:", e); }
     }
 
     function setupRecognition() {
@@ -180,7 +180,8 @@
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // 【最重要】Androidでの内部エンジンスタックを回避するため、Androidのみ連続認識を強制OFF。PCはON。
+        // 【Androidフリーズ・増殖対策の核心】
+        // Androidは絶対にcontinuousをfalse（単発使い捨て）にする。PCは快適性のためtrueを維持。
         recognition.continuous = !isAndroid;
 
         recognition.onstart = () => updateStatus('online', "認識中：お話しください。");
@@ -188,59 +189,35 @@
         recognition.onresult = (e) => {
             let interimText = '';
             
-            if (isAndroid) {
-                // ------ 【Android専用：超高速・単発バッファ処理】 ------
-                // continuousをOFFにしたため、e.resultsには常に今話している1文しか入ってこない
-                const lastResultIndex = e.results.length - 1;
-                const result = e.results[lastResultIndex];
-                const transcript = result[0].transcript;
-
+            // e.resultIndexから最新の結果までを素直にループ処理
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                let result = e.results[i];
                 if (result.isFinal) {
-                    let cleanedText = transcript.trim();
-                    if (cleanedText !== "") {
-                        const currentFinal = finalSpan.innerText.trim();
-                        const hasPunct = /[。？！?!]$/.test(currentFinal);
-                        let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
-                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+                    let cleanedText = result[0].transcript.trim();
+                    
+                    // フィラー（えー、あの等）の削除
+                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                    cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                    
+                    if (cleanedText === "") continue;
 
-                        finalSpan.innerText += separator + cleanedText;
-                        addLog(cleanedText, true); // ログに「確定」を1発だけ綺麗に表示
-                        interimSpan.innerText = "";
-                    }
+                    const currentFinal = finalSpan.innerText.trim();
+                    const hasPunct = /[。？！?!]$/.test(currentFinal);
+                    let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
+                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
+
+                    finalSpan.innerText += separator + cleanedText;
+                    addLog(cleanedText, true); // 確定した文をログに1発だけ綺麗に流す
+                    interimText = ''; 
                 } else {
-                    // リアルタイムに暫定ストリーム（グレー文字）とログを吐き出す
-                    interimText = transcript;
-                    interimSpan.innerText = interimText;
-                    if (interimText.trim() !== "") {
-                        addLog(interimText, false); // 認識中のログを正しく流す
-                    }
+                    interimText += result[0].transcript;
                 }
-            } else {
-                // ------ 【PC専用：従来通りの高スループット連続処理】 ------
-                for (let i = e.resultIndex; i < e.results.length; i++) {
-                    let result = e.results[i];
-                    if (result.isFinal) {
-                        let cleanedText = result[0].transcript.trim();
-                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-                        
-                        if (cleanedText === "") continue;
-
-                        const currentFinal = finalSpan.innerText.trim();
-                        const hasPunct = /[。？！?!]$/.test(currentFinal);
-                        let separator = currentFinal !== "" ? (hasPunct ? "\n" : "。\n") : "";
-                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-
-                        finalSpan.innerText += separator + cleanedText;
-                        addLog(cleanedText, true);
-                    } else {
-                        interimText += result[0].transcript;
-                    }
-                }
-                interimSpan.innerText = interimText;
-                if (interimText.trim() !== "") {
-                    addLog(interimText, false);
-                }
+            }
+            
+            // 認識中（暫定）ストリーム（グレー文字）を即座に反映
+            interimSpan.innerText = interimText;
+            if (interimText.trim() !== "") {
+                addLog(interimText, false); // リアルタイムな中間ログを表示
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
@@ -248,9 +225,9 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
-                // 【再起動ロジックの完全分離】
-                // Androidは1文ごとに止まるので、ラグを一切挟まず「0ミリ秒」で超即時再起動させる
-                // PCは文字落ちを防ぐため安全に150ミリ秒待つ
+                // 【超重要リスタート戦略】
+                // Androidは単発モードなので1文ごとに必ずここに来る。ラグをゼロにするため「0ミリ秒」で超即時再起動。
+                // PCは文字落を防ぐために安全クッション（150ミリ秒）を挟む。
                 const delay = isAndroid ? 0 : 150;
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
@@ -284,20 +261,22 @@
     }
 
     async function startStream() {
-        if (!isAndroid) {
-            const deviceId = micSelect.value;
-            const constraints = {
-                audio: {
-                    deviceId: deviceId ? deviceId : undefined,
-                    echoCancellation: true,
-                    noiseSuppression: noiseToggle.checked,
-                    autoGainControl: true
-                }
-            };
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                await refreshDevices();
-            } catch (e) { console.warn(e); }
+        // マイクの権限とストリームを確実に確保（Androidのマイク選択拒否を打破）
+        const deviceId = micSelect.value;
+        const constraints = {
+            audio: {
+                deviceId: deviceId ? deviceId : undefined,
+                echoCancellation: true,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: true
+            }
+        };
+        try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            // 権限が取れたこの直後にデバイス一覧を再取得することで、Androidでもマイク名が確実に並ぶ
+            await refreshDevices();
+        } catch (e) { 
+            console.warn("マイクアクセス制限:", e); 
         }
 
         const rec = setupRecognition();
@@ -369,7 +348,7 @@
 
     micSelect.onchange = async () => {
         if (isActive) {
-            updateStatus('connecting', "切り替え中...");
+            updateStatus('connecting', "マイク切替中...");
             await stopMedia();
             isActive = true;
             await startStream();
@@ -391,8 +370,9 @@
         } 
     };
 
+    // 起動時にまず一度デバイス一覧の取得を試みる（PC用・Androidでも権限があれば出る）
     window.onload = async () => {
-        if (!isAndroid) await refreshDevices();
+        await refreshDevices();
     };
 </script>
 </body>
