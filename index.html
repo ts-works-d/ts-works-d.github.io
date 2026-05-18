@@ -105,7 +105,12 @@
     let isActive = false;
     let restartTimer = null;
     let configTimeout = null;
-    let activeStream = null; // ハードウェアマイク固定用のストリーム保持変数
+    
+    // Web Audio API用リソース（選択マイクをシステムレベルで有効化・感度ブーストする肝）
+    let audioContext = null;
+    let audioSource = null;
+    let gainNode = null;
+    let activeStream = null; 
     
     // パフォーマンス向上・重複カット用バッファ
     let finalParagraphs = [];
@@ -131,7 +136,6 @@
         }
     }
 
-    // 周辺マイクデバイスの一覧を取得・更新する
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -152,15 +156,21 @@
         } catch (e) {}
     }
 
-    // 選択された特定のマイクをハードウェアレベルで強制的に起動・ホールドする（これがないとAndroidでマイクが認識しません）
-    async function acquireSelectedMicStream() {
-        if (activeStream) return; // すでに掴んでいる場合は使い回す（爆速化）
+    // 選択マイクのパイプラインをWeb Audio APIでブラウザに直結する（認識しない問題を根本解決）
+    async function setupAudioPipeline() {
+        // 既存ストリームとオーディオノードのクリーンアップ
+        if (audioSource) { audioSource.disconnect(); audioSource = null; }
+        if (gainNode) { gainNode.disconnect(); gainNode = null; }
+        if (activeStream) {
+            activeStream.getTracks().forEach(t => t.stop());
+            activeStream = null;
+        }
 
         const constraints = {
             audio: {
                 echoCancellation: noiseToggle.checked,
                 noiseSuppression: noiseToggle.checked,
-                autoGainControl: true
+                autoGainControl: false // 手動のゲイン調整を優先するためfalse
             }
         };
 
@@ -169,15 +179,39 @@
         }
 
         try {
+            // 1. 指定されたハードウェアマイクを起動
             activeStream = await navigator.mediaDevices.getUserMedia(constraints);
-            await refreshDevices(); // デバイスの固有ラベル名を取得させるため再リフレッシュ
+            await refreshDevices();
+
+            // 2. オーディオコンテキストの初期化（ユーザー操作トリガーのみ許可される）
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+
+            // 3. マイク音声をWeb Audioのルート（通り道）に接続
+            audioSource = audioContext.createMediaStreamSource(activeStream);
+            gainNode = audioContext.createGain();
+            
+            // 画面の「感度調整」の数値を適用して増幅
+            const gainMultiplier = parseFloat(gainSelect.value) || 1.0;
+            gainNode.gain.setValueAtTime(gainMultiplier, audioContext.currentTime);
+
+            // ソースをゲイン（感度設定）に接続
+            audioSource.connect(gainNode);
+            
+            // 【重要】音声認識エンジンが反応できるように、ダミーの出力先に逃がす（これをしないとAndroid等でStreamが休止状態になります）
+            const destination = audioContext.createMediaStreamDestination();
+            gainNode.connect(destination);
+
         } catch (err) {
-            console.error("指定マイクのオープンに失敗、デフォルトでリトライします:", err);
+            console.error("オーディオパイプラインの構築失敗:", err);
+            // 失敗時はデフォルトフォールバック
             try {
                 activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            } catch(e) {
-                console.error("マイクストリームの完全取得失敗:", e);
-            }
+            } catch(e) {}
         }
     }
 
@@ -215,7 +249,6 @@
                     processedIndices.add(i);
                     if (confirmedSet.has(cleanText)) continue;
 
-                    // Android雪だるま差分吸収・重複ガード
                     if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
                         transcript = transcript.substring(lastConfirmedText.length);
                     }
@@ -224,11 +257,10 @@
                     if (cleanedText === "") continue;
 
                     confirmedSet.add(cleanText);
-                    lastConfirmedText = result[0].transcript; // 次回比較用に生の文字を記憶
+                    lastConfirmedText = result[0].transcript; 
 
                     if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                    // 高速化のため内部配列にPushし、DOMへの直接加算を避ける
                     finalParagraphs.push(cleanedText);
                     hasNewFinal = true;
                 } else {
@@ -238,7 +270,6 @@
                 }
             }
 
-            // バッチ描画処理でフリーズ・カクつきを完全排除
             if (hasNewFinal) {
                 finalSpan.textContent = finalParagraphs.join("\n");
                 interimSpan.textContent = '';
@@ -251,15 +282,13 @@
             }
         };
 
-        // 切断検知時の超高速リスタート
         recognition.onend = () => {
             recognition = null;
-            processedIndices.clear(); // メモリ解放
+            processedIndices.clear(); 
             
             if (isActive) {
                 updateStatus('connecting', "再接続中...");
                 clearTimeout(restartTimer);
-                // 2秒も待たず、ストリームを維持したまま「待ち時間0ms」で即時リスタートします
                 restartTimer = setTimeout(() => {
                     if (isActive) startSpeechEngine();
                 }, 0); 
@@ -267,7 +296,6 @@
         };
 
         recognition.onerror = (ev) => {
-            // エラー時はstopではなくabort()を呼ぶことで、Androidのマイクフリーズを回避して高速復帰させます
             if (ev.error === 'no-speech' || ev.error === 'audio-capture' || ev.error === 'network') {
                 try { recognition.abort(); } catch(e){}
             } else if (ev.error === 'not-allowed') {
@@ -285,7 +313,6 @@
         }
     }
 
-    // エンジンとマイクのリソースをクリーンに停止する
     function stopSpeechEngine(closeMic = false) {
         isActive = false; 
         clearTimeout(restartTimer);
@@ -294,32 +321,36 @@
         updateStatus('', "停止しました。");
         
         if (recognition) {
-            try {
-                recognition.abort(); // Androidでの解放を最速にするためabortに変更
-            } catch(e){}
+            try { recognition.abort(); } catch(e){}
             recognition = null;
         }
 
-        // 明示的な「停止ボタン」クリック時、またはエラー時のみハードマイクを完全に閉じる
-        if (activeStream && closeMic) {
-            activeStream.getTracks().forEach(t => t.stop());
-            activeStream = null;
+        // 明示的な「停止」のときのみハードウェアおよびオーディオグラフを完全切断
+        if (closeMic) {
+            if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
+            if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
+            if (activeStream) {
+                activeStream.getTracks().forEach(t => t.stop());
+                activeStream = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.suspend();
+            }
         }
         interimSpan.textContent = "";
     }
 
-    // 設定変更時は、マイクを一度完全に掴み直すためにcloseMicをtrueにしてホットリスタート
     function handleConfigChange() {
         if (!isActive) return;
-        stopSpeechEngine(true);
+        stopSpeechEngine(true); // パイプラインを一度綺麗にクラッシュさせてリスタート
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
         clearTimeout(configTimeout);
         configTimeout = setTimeout(async () => {
             if (isActive) {
-                updateStatus('connecting', "設定適用中...");
-                await acquireSelectedMicStream();
+                updateStatus('connecting', "マイクを切り替え中...");
+                await setupAudioPipeline();
                 startSpeechEngine();
             }
         }, 300);
@@ -335,16 +366,16 @@
         processedIndices.clear();
         lastConfirmedText = "";
         
-        updateStatus('connecting', "マイクを初期化中...");
+        updateStatus('connecting', "オーディオシステム起動中...");
         
-        // 1. 選択されているハードウェアマイクを確実にバインドする
-        await acquireSelectedMicStream();
-        // 2. 音声認識を点火
+        // 1. Web Audio API とマイクストリームの物理接続を確立
+        await setupAudioPipeline();
+        // 2. 音声認識エンジン始動
         startSpeechEngine();
     };
 
     stopBtn.onclick = () => {
-        stopSpeechEngine(true); // 完全に停止する
+        stopSpeechEngine(true); 
     };
 
     micSelect.onchange = handleConfigChange;
@@ -393,10 +424,9 @@
 
     window.onload = async () => {
         try {
-            // 初回起動時にマイクのパーミッション（許可）をブラウザに求め、利用可能なデバイス名を取得できるようにする
             const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             await refreshDevices();
-            initStream.getTracks().forEach(t => t.stop()); // リスト取得後は一度安全に閉じる
+            initStream.getTracks().forEach(t => t.stop()); 
         } catch(e){}
     };
 </script>
