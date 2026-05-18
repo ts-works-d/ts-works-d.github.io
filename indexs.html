@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（スマホ・PC完全対応版）</title>
+    <title>逐語録（フル機能・スマホ対応版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -20,8 +20,7 @@
         @keyframes blink { 50% { opacity: 0.5; } }
         select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
-        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; margin-bottom: 8px; color: #555; align-items: center; }
-        input[type="range"] { width: 100%; cursor: pointer; height: 8px; accent-color: var(--primary); }
+        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
         button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
         #start { background: var(--primary); }
@@ -30,8 +29,6 @@
         #save { background: var(--success); }
         #clear { background: var(--secondary); }
         button:disabled { background: #ccc !important; cursor: not-allowed; opacity: 0.6; }
-        .meter-container { width: 100%; height: 10px; background: #eee; border-radius: 50px; margin-bottom: 10px; overflow: hidden; border: 1px solid #e0e0e0; }
-        #meter-bar { width: 0%; height: 100%; background: var(--success); transition: width 0.1s ease-out; }
         .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 8px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; }
         #output-box { width: 100%; height: 450px; padding: 20px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
         #final-span { color: #222; white-space: pre-wrap; }
@@ -53,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（スマホ・PC対応決定版）</h2>
+            <h2>逐語録（フル機能・スマホ対応版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -69,10 +66,6 @@
                         <span class="slider"></span>
                     </label>
                 </div>
-                <div class="setting-label" style="margin-top: 10px;">
-                    <span>メーター感度調整</span><span id="sensitivity-val">x4.0</span>
-                </div>
-                <input type="range" id="sensitivity-slider" min="1" max="20" step="0.5" value="4">
             </div>
             <div class="controls">
                 <button id="start">認識開始</button>
@@ -81,7 +74,6 @@
                 <button id="save">保存</button>
                 <button id="clear">クリア</button>
             </div>
-            <div class="meter-container"><div id="meter-bar"></div></div>
             <div class="status-area" id="status-display">「認識開始」を押してください。</div>
             <div id="output-box"><span id="final-span"></span><span id="interim-span"></span></div>
         </div>
@@ -107,23 +99,13 @@
     const outputBox = document.getElementById('output-box');
     const logArea = document.getElementById('log-area');
     const statusDisp = document.getElementById('status-display');
-    const meterBar = document.getElementById('meter-bar');
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
-    const sensitivitySlider = document.getElementById('sensitivity-slider');
-    const sensitivityVal = document.getElementById('sensitivity-val');
 
     let recognition = null;
     let isActive = false;
-    let audioCtx = null, stream = null, source = null, analyser = null;
-    let animationFrameId = null;
+    let stream = null;
     let restartTimeoutId = null;
-    let multiplier = 4.0;
-
-    sensitivitySlider.oninput = () => {
-        multiplier = sensitivitySlider.value;
-        sensitivityVal.innerText = `x${parseFloat(multiplier).toFixed(1)}`;
-    };
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -210,7 +192,7 @@
             outputBox.scrollTop = outputBox.scrollHeight;
         };
         
-        // スマホ特有の頻繁な強制切断に対応する自動復帰処理
+        // スマホ特有の自動切断に対抗する再起動処理
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
@@ -222,7 +204,7 @@
             } 
         };
         
-        // 無音エラー(no-speech)発生時も停止させず再起動ループに回す
+        // 無音エラーや割り込み発生時のハンドリング
         recognition.onerror = (ev) => { 
             if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
                 try { recognition.stop(); } catch(e){}
@@ -237,7 +219,6 @@
     async function stopMedia() {
         isActive = false;
         clearTimeout(restartTimeoutId);
-        if (animationFrameId) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
         
         if (recognition) { 
             recognition.onend = null; 
@@ -245,67 +226,34 @@
             try { recognition.stop(); } catch(e){}
             recognition = null; 
         }
-        if (source) { try { source.disconnect(); } catch(e){} source = null; }
-        if (analyser) { try { analyser.disconnect(); } catch(e){} analyser = null; }
-        if (audioCtx) { try { await audioCtx.close(); } catch(e){} audioCtx = null; }
         if (stream) { stream.getTracks().forEach(t => { try { t.stop(); } catch(e){} }); stream = null; }
-    }
-
-    function updateVolumeMeter() {
-        if (!isActive || !analyser) return;
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(dataArray);
-        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-        
-        meterBar.style.width = Math.min(100, avg * multiplier) + "%";
-        animationFrameId = requestAnimationFrame(updateVolumeMeter);
     }
 
     async function startStream() {
         const deviceId = micSelect.value;
         const constraints = {
             audio: {
-                deviceId: deviceId ? deviceId : undefined, // exactエラーを防止
+                deviceId: deviceId ? deviceId : undefined,
                 echoCancellation: true,
                 noiseSuppression: noiseToggle.checked,
                 autoGainControl: true
             }
         };
 
-        // マイクのストリームを取得
+        // マイクストリームの取得
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         await refreshDevices();
 
-        // スマホのセキュリティを通過させるため、ここでAudioContextを接続
-        if (audioCtx) {
-            source = audioCtx.createMediaStreamSource(stream);
-            analyser = audioCtx.createAnalyser();
-            analyser.fftSize = 256;
-            source.connect(analyser);
-            updateVolumeMeter();
-        }
-
+        // 競合の元となっていた「AudioContext(メーター)」ロジックを完全排除して認識処理へ移行
         const rec = setupRecognition();
         if (rec) rec.start();
     }
 
-    // ★スマホ対応のための最重要変更：タップした「その瞬間」にAudioContextを即座に生成する
     startBtn.onclick = async () => {
         try {
             startBtn.disabled = true;
             updateStatus('connecting', "初期化中...");
             isActive = true;
-
-            // スマホブラウザの制限を突破するため、最優先でオーディオコンテキストをアクティブにする
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (AudioContextClass) {
-                audioCtx = new AudioContextClass();
-                // iOS対策：中断状態であれば強制再開
-                if (audioCtx.state === 'suspended') {
-                    await audioCtx.resume();
-                }
-            }
-
             await startStream();
             stopBtn.disabled = false;
         } catch (e) {
@@ -321,7 +269,6 @@
         await stopMedia();
         startBtn.disabled = false;
         stopBtn.disabled = true;
-        meterBar.style.width = "0%";
         updateStatus('', "停止しました。");
     };
 
@@ -343,7 +290,12 @@
         if (!text.trim()) return;
         
         const now = new Date();
-        const timestamp = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+        const timestamp = now.getFullYear() + 
+            String(now.getMonth() + 1).padStart(2, '0') + 
+            String(now.getDate()).padStart(2, '0') + '_' + 
+            String(now.getHours()).padStart(2, '0') + 
+            String(now.getMinutes()).padStart(2, '0') + 
+            String(now.getSeconds()).padStart(2, '0');
         
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
@@ -358,21 +310,18 @@
 
     micSelect.onchange = async () => {
         if (isActive) {
+            updateStatus('connecting', "デバイス切り替え...");
             await stopMedia();
             isActive = true;
-            // 再変更時もコンテキストを初期化
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (AudioContextClass) audioCtx = new AudioContextClass();
             await startStream();
         }
     };
 
     noiseToggle.onchange = async () => {
         if (isActive) {
+            updateStatus('connecting', "ノイズ設定反映中...");
             await stopMedia();
             isActive = true;
-            const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-            if (AudioContextClass) audioCtx = new AudioContextClass();
             await startStream();
         }
     };
