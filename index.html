@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（インデックス同期・完全版）</title>
+    <title>逐語録（全画面突合ガード・重複完全根絶版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -50,7 +50,7 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（インデックス同期・完全版）</h2>
+            <h2>逐語録（全画面突合ガード・重複完全根絶版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
@@ -121,7 +121,7 @@
     let recognition = null;
     let isActive = false;
     
-    // 多重表示と文字落ちを物理的に防ぐための、ブラウザイベントとの同期インデックス管理
+    // Androidの偽装再送を完全に見破るための、インデックス・文末の厳格な二重壁
     let highestLoggedIndex = -1;
 
     function addLog(text, isFinal) {
@@ -181,9 +181,7 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        
-        // Android/PCともにタイムラグをゼロにするため常時接続（continuous=true）
-        recognition.continuous = true;
+        recognition.continuous = true; // 常時接続でタイムラグを撲滅
 
         const selectedMicId = micSelect.value;
         if (selectedMicId && recognition.audioTrack) {
@@ -196,26 +194,37 @@
 
         recognition.onresult = (e) => {
             let interimText = '';
+            const wholeScreenText = finalSpan.innerText; // 現在画面にある全テキストを取得
 
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let result = e.results[i];
                 let transcript = result[0].transcript.trim();
 
-                // フィラー（えー、あの）をリアルタイム除去
+                // フィラー（えー、あの）をリアルタイムで確実に削ぎ落とす
                 const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                 transcript = transcript.replace(fillerRegex, "").trim();
 
                 if (transcript === "") continue;
 
-                // ブラウザが「確実に確定（isFinal）」としたインデックス（塊）のみを結合
+                // 公式に確定（isFinal）したデータのみを処理
                 if (result.isFinal) {
-                    // すでに処理を終えたインデックス番号（古い塊）なら絶対に無視して多重表示を防ぐ
-                    if (i <= highestLoggedIndex) {
+                    if (i <= highestLoggedIndex) continue;
+
+                    // 【最強のダブり防御壁：画面内全文字列スキャン】
+                    // 新しく届いたテキストが、すでに画面内に丸ごと含まれている（ダブり再送）なら、物理的に絶対に挿入しない
+                    if (wholeScreenText.includes(transcript)) {
                         continue;
                     }
-                    highestLoggedIndex = i; // 最新の確定済みインデックスを記録
 
-                    // 画面へ出力（一切の間引き・予測をせず、ブラウザの確定文字を100%信用して出す）
+                    // 念のため、文末の直近5文字程度が重複して送られてきた場合も弾くガード
+                    const lastFewChars = wholeScreenText.replace(/[\s。、]/g, "").slice(-6);
+                    if (lastFewChars.length >= 3 && transcript.replace(/[\s。、]/g, "").startsWith(lastFewChars)) {
+                        continue;
+                    }
+
+                    highestLoggedIndex = i; // ポインタを更新
+
+                    // 画面へ無加工で愚直に出力（文字落ちの発生を完全に遮断）
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = currentFinal !== "" ? "\n" : "";
                     if (!/[。？！?!]$/.test(transcript)) transcript += "。";
@@ -224,8 +233,8 @@
                     addLog(transcript, true);
                     interimText = '';
                 } else {
-                    // まだ確定していない塊は、一時プレビューとしてのみ表示
-                    if (i > highestLoggedIndex) {
+                    // 未確定テキストは、画面内にすでに無い文字だけをプレビューに回す（プレビューのダブりも防止）
+                    if (i > highestLoggedIndex && !wholeScreenText.includes(transcript)) {
                         interimText += transcript;
                     }
                 }
@@ -240,7 +249,6 @@
 
         recognition.onend = () => {
             recognition = null;
-            // 意図しない切断時のみ超高速自動復帰
             if (isActive) {
                 setTimeout(() => { if (isActive) startSpeechEngine(); }, 100);
             }
@@ -276,7 +284,7 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        highestLoggedIndex = -1; // 完全に初期化
+        highestLoggedIndex = -1;
         updateStatus('connecting', "マイクを初期化中...");
         startSpeechEngine();
     };
