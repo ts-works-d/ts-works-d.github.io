@@ -55,11 +55,9 @@
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            
             <select id="mic-select">
                 <option value="">-- [認識開始]後にマイクを選択できます --</option>
             </select>
-            
             <div class="setting-box">
                 <div class="setting-label">
                     <span>ノイズ軽減（要再起動）</span>
@@ -69,7 +67,6 @@
                     </label>
                 </div>
             </div>
-            
             <div class="controls">
                 <button id="start">認識開始</button>
                 <button id="stop" disabled>停止</button>
@@ -135,13 +132,15 @@
         }
     }
 
-    // 文字レベルでの最高精度・重複カットロジック
+    // Android Chrome特有の文字列重複バグを完全排除するロジック
     function eliminateDuplicateText(currentFullText, newText) {
         if (!currentFullText || !newText) return newText;
 
+        // 比較のために余計な記号・空白・改行を除去
         const cleanCurrent = currentFullText.replace(/[。？！?!\s\n]/g, "");
         const cleanNew = newText.replace(/[。？！?!\s\n]/g, "");
 
+        // すでに完全に含まれている場合は重複とみなしてスキップ
         if (cleanCurrent.includes(cleanNew)) {
             return "";
         }
@@ -149,6 +148,7 @@
         const maxCheckLength = Math.min(cleanCurrent.length, cleanNew.length);
         let overlapLength = 0;
 
+        // 末尾と先頭の重なり（最長共通接頭辞・接尾辞）を文字単位で算出
         for (let i = 1; i <= maxCheckLength; i++) {
             const currentTail = cleanCurrent.substring(cleanCurrent.length - i);
             const newHead = cleanNew.substring(0, i);
@@ -157,6 +157,7 @@
             }
         }
 
+        // 重なりがあればその部分を削り落とす
         if (overlapLength > 0) {
             let currentMatchLen = 0;
             let cutIndex = 0;
@@ -183,9 +184,10 @@
             const currentVal = micSelect.value;
             micSelect.innerHTML = '';
             
+            // 初回読み込み時などでラベルが取得できない場合のモバイル向け対策
             if (audioInputs.length === 0 || audioInputs[0].label === "") {
                 const opt = document.createElement('option');
-                opt.value = "";
+                opt.value = currentVal || "";
                 opt.text = "既定のマイク（認識開始後に選択可能）";
                 micSelect.appendChild(opt);
                 return;
@@ -204,11 +206,9 @@
     }
 
     function setupRecognition() {
-        const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition;
-        if (!SpeechRecognition) {
-            updateStatus('error', "お使いのブラウザは音声認識に対応していません。");
-            return null;
-        }
+        // Android Chrome向けに webkitSpeechRecognition を確実にフォールバック
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) return null;
         
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
@@ -232,7 +232,7 @@
 
                     let currentFinal = finalSpan.innerText;
                     
-                    // Android重複完全シャットアウト処理
+                    // 【強化】重複排除ロジックを通す
                     cleanedText = eliminateDuplicateText(currentFinal, cleanedText).trim();
                     if (cleanedText === "") continue;
 
@@ -256,6 +256,7 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
+                // Androidのデバイス解放速度に合わせてインターバルを400msに調整
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
@@ -266,11 +267,12 @@
         
         recognition.onerror = (ev) => { 
             console.warn("認識エラー:", ev.error);
-            if (ev.error === 'not-allowed') {
+            if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
+                // デバイス競合時は一度ストップさせて自動復帰に回す
+                try { recognition.stop(); } catch(e){}
+            } else if (ev.error === 'not-allowed') {
                 updateStatus('error', "マイクの権限が拒否されました。");
                 stopMedia();
-            } else if (ev.error === 'network') {
-                updateStatus('error', "ネットワークエラーが発生しました。");
             }
         };
         
@@ -305,19 +307,21 @@
             }
         };
 
-        // Android等での競合を防ぐため安全に getUserMedia をハンドリング
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            try {
-                stream = await navigator.mediaDevices.getUserMedia(constraints);
-                await refreshDevices();
-            } catch (mediaError) {
-                console.warn("詳細マイクの取得に失敗したため既定のマイクで起動します");
-                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            }
-        }
+        // マイクストリームを取得（これによりブラウザ側の権限が確定する）
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        // 権限が取れたこのタイミングでデバイスリストを完全に更新（マイク名が復活する）
+        await refreshDevices();
 
         const rec = setupRecognition();
-        if (rec) rec.start();
+        if (rec) {
+            // Androidのハードウェア競合を防ぐため、少しだけ待ってから音声認識を開始させる
+            setTimeout(() => {
+                if (isActive && rec) {
+                    try { rec.start(); } catch(e) { console.error(e); }
+                }
+            }, 300);
+        }
     }
 
     startBtn.onclick = async () => {
@@ -399,6 +403,7 @@
         } 
     };
 
+    // 起動時は安全のために仮のマイク一覧を生成して待機
     window.onload = () => {
         refreshDevices().catch(e => console.log("初期化スキップ"));
     };
