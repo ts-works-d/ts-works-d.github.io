@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（完全版）</title>
+    <title>逐語録（完全ネイティブ安定版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 1100px; margin: auto; color: #333; }
@@ -18,7 +18,7 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
+        select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #eee; color: #555; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
         .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
@@ -37,12 +37,10 @@
         .log-entry { margin-bottom: 5px; border-left: 2px solid #444; padding-left: 8px; }
         .log-time { color: #888; margin-right: 5px; }
 
-        .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
+        .switch { position: relative; display: inline-block; width: 34px; height: 20px; opacity: 0.6; }
         .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
-        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--primary); }
-        input:checked + .slider:before { transform: translateX(14px); }
+        .slider { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; }
     </style>
 </head>
 <body>
@@ -50,34 +48,25 @@
 <div class="container">
     <div class="main-panel">
         <div class="card">
-            <h2>逐語録（フル機能・安定版）</h2>
+            <h2>逐語録（完全ネイティブ安定版）</h2>
             <div class="conn-status">
                 <div id="indicator" class="indicator"></div>
                 <span id="conn-text">音声認識：待機中</span>
             </div>
-            <select id="mic-select">
-                <option value="">-- マイクを選択（認識開始後に利用可能） --</option>
+            <select id="mic-select" disabled>
+                <option value="">OS・システム既定のマイク（自動追従）</option>
             </select>
             <div class="setting-box">
                 <div class="setting-label" style="margin-bottom: 12px;">
                     <span>感度調整（倍率）</span>
-                    <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
-                        <option value="1">1 (標準)</option>
+                    <select id="gain-select" disabled style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px; background: #eee;">
                         <option value="2" selected>2</option>
-                        <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
-                        <option value="6">6</option>
-                        <option value="7">7</option>
-                        <option value="8">8</option>
-                        <option value="9">9</option>
-                        <option value="10">10 (最大)</option>
                     </select>
                 </div>
                 <div class="setting-label">
-                    <span>ノイズ軽減（要再起動）</span>
+                    <span>ノイズ軽減（システム自動最適化）</span>
                     <label class="switch">
-                        <input type="checkbox" id="noise-toggle">
+                        <input type="checkbox" id="noise-toggle" disabled>
                         <span class="slider"></span>
                     </label>
                 </div>
@@ -102,13 +91,11 @@
 </div>
 
 <script>
-    const micSelect = document.getElementById('mic-select');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
     const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
-    const noiseToggle = document.getElementById('noise-toggle');
     const finalSpan = document.getElementById('final-span');
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
@@ -120,8 +107,6 @@
     let recognition = null;
     let isActive = false;
     let restartTimeoutId = null;
-    
-    const isAndroid = /Android/i.test(navigator.userAgent);
 
     function addLog(text, isFinal) {
         const entry = document.createElement('div');
@@ -130,7 +115,7 @@
         entry.innerHTML = `<span class="log-time">[${timeStr}]</span><span>${isFinal ? '<b>[確定]</b> ' : ''}${text}</span>`;
         logArea.appendChild(entry);
         logArea.scrollTop = logArea.scrollHeight;
-        if (logArea.childNodes.length > 50) logArea.removeChild(logArea.firstChild);
+        if (logArea.childNodes.length > 40) logArea.removeChild(logArea.firstChild);
     }
 
     function updateStatus(type, msg) {
@@ -148,39 +133,22 @@
         }
     }
 
-    async function refreshDevices() {
-        try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-            const devices = await navigator.mediaDevices.enumerateDevices();
-            const audioInputs = devices.filter(d => d.kind === 'audioinput');
-            const currentVal = micSelect.value;
-            micSelect.innerHTML = '';
-            
-            audioInputs.forEach((d, i) => {
-                const opt = document.createElement('option');
-                opt.value = d.deviceId; 
-                opt.text = d.label || `マイク ${i + 1}`;
-                micSelect.appendChild(opt);
-            });
-            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
-                micSelect.value = currentVal;
-            }
-        } catch (e) { console.error(e); }
-    }
-
-    function startRecognitionProcess() {
+    function initRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;
+        if (!SpeechRecognition) {
+            updateStatus('error', "音声認識機能非対応のブラウザです。");
+            return;
+        }
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
         
-        // Androidは多重表示（古いバッファ）を消すためfalse（都度リセット）、PCはスムーズな連続モード
-        recognition.continuous = !isAndroid;
+        // Android/PC共通：ブラウザの最も安定するネイティブ連続認識モードで動作させる
+        recognition.continuous = true;
 
         recognition.onstart = () => {
-            updateStatus('online', "認識中：お話しください。");
+            updateStatus('online', "認識中：マイクは正常に開通しています。");
         };
 
         recognition.onresult = (e) => {
@@ -190,7 +158,8 @@
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
-                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                    // フィラー（無駄な繋ぎ言葉）の簡易除去
+                    const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").trim();
                     
                     if (cleanedText === "") continue;
@@ -214,48 +183,39 @@
         };
 
         recognition.onend = () => {
+            // 音声バッファの詰まりを完全に防ぐため、350msの十分な余白を置いて再起動
             if (isActive) {
                 clearTimeout(restartTimeoutId);
-                // バッファを完全にクリアしつつフリーズを防ぐため、安全なクッション（300ms）を挟んで再起動
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
-                        try { recognition.start(); } catch(e){}
+                        try { recognition.start(); } catch(e) {}
                     }
-                }, 300);
+                }, 350);
             }
         };
 
         recognition.onerror = (ev) => {
-            if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
-                // 軽微なタイムアウトはonend側で自動回復させる
-            } else {
-                console.warn("認識エラー:", ev.error);
-            }
+            console.warn("システム認識通知:", ev.error);
         };
-
-        recognition.start();
     }
 
-    startBtn.onclick = async () => {
+    startBtn.onclick = () => {
+        isActive = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        updateStatus('connecting', "マイク接続中...");
+        
+        if (!recognition) {
+            initRecognition();
+        }
+        
         try {
-            startBtn.disabled = true;
-            updateStatus('connecting', "起動中...");
-            isActive = true;
-            
-            // 初回開始時、マイクデバイスの権限を取得し、リストを更新
-            try {
-                const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                await refreshDevices();
-                tempStream.getTracks().forEach(t => t.stop()); // リスト取得後はバッファ競合を防ぐため即切断
-            } catch(e) { console.warn("マイク権限取得スキップ:", e); }
-
-            startRecognitionProcess();
-            stopBtn.disabled = false;
-        } catch (e) {
+            recognition.start();
+        } catch(e) {
             console.error(e);
-            updateStatus('error', "起動失敗。");
+            updateStatus('error', "起動失敗。マイク許可を確認してください。");
             startBtn.disabled = false;
-            isActive = false;
+            stopBtn.disabled = true;
         }
     };
 
@@ -299,32 +259,10 @@
         URL.revokeObjectURL(url);
     };
 
-    micSelect.onchange = () => {
-        if (isActive) {
-            // マイク選択変更時、エンジンを一度止めてonend側で新設定の状態で再起動させる
-            if (recognition) { try { recognition.stop(); } catch(e){} }
-        }
-    };
-
-    noiseToggle.onchange = () => {
-        if (isActive) {
-            if (recognition) { try { recognition.stop(); } catch(e){} }
-        }
-    };
-
-    clearBtn.onclick = () => { 
-        if (confirm("表示されているテキストを消去しますか？")) { 
+    clearBtn.onclick = () => {
+        if (confirm("テキストを消去しますか？")) {
             finalSpan.innerText = ""; interimSpan.innerText = ""; logArea.innerHTML = "";
-        } 
-    };
-
-    window.onload = async () => {
-        // ページ読み込み時に権限を求め、マイク一覧を作成
-        try {
-            const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            await refreshDevices();
-            initStream.getTracks().forEach(t => t.stop());
-        } catch(e){}
+        }
     };
 </script>
 </body>
