@@ -114,16 +114,11 @@
     let restartTimer = null;
     let configTimeout = null;
     
-    // Web Audio API（ゲイン増幅 & マイク常時アクティブ化）
+    // Web Audio API（デバイス切り替え・ダミー接続用）
     let audioContext = null;
     let audioSource = null;
     let gainNode = null;
     let activeStream = null; 
-    
-    let finalParagraphs = [];
-    let confirmedSet = new Set();
-    let processedIndices = new Set();
-    let lastConfirmedText = "";
 
     function updateStatus(type, msg) {
         statusDisp.innerText = msg;
@@ -169,9 +164,8 @@
         }
     }
 
-    // マイクデバイスのストリームと音量増幅をブラウザ内にバインド
+    // マイクデバイスの初期化（※挙動を簡素化しエラーを防ぐ）
     async function setupAudioPipeline() {
-        // 古いハードウェアストリームを強制リセットしてクリーンにする
         if (audioSource) { try{audioSource.disconnect();}catch(e){} audioSource = null; }
         if (gainNode) { try{gainNode.disconnect();}catch(e){} gainNode = null; }
         if (activeStream) {
@@ -209,13 +203,11 @@
             gainNode.gain.setValueAtTime(gainMultiplier, audioContext.currentTime);
 
             audioSource.connect(gainNode);
-            // Androidの省電力スリープを防ぐためダミーの目的地に音声を流し込む
             const destination = audioContext.createMediaStreamDestination();
             gainNode.connect(destination);
 
         } catch (err) {
-            console.error("マイクシステムの接続失敗:", err);
-            // 権限エラー等で完全に拒否された場合を除き、デフォルトマイクで再試行
+            console.error("マイク接続警告:", err);
             try {
                 activeStream = await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch(e) {
@@ -224,6 +216,7 @@
         }
     }
 
+    // indexssベースに全面修正した音声認識コアロジック
     function startSpeechEngine() {
         if (!isActive) return;
 
@@ -245,27 +238,13 @@
 
             recognition.onresult = (e) => {
                 let interimText = '';
-                let hasNewFinal = false;
 
                 for (let i = e.resultIndex; i < e.results.length; i++) {
-                    let result = e.results[i];
-                    let transcript = result[0].transcript;
-
+                    let transcript = e.results[i][0].transcript;
                     if (!transcript) continue;
-                    const cleanText = transcript.replace(/[\s。、]/g, "");
 
-                    if (result.isFinal) {
-                        if (processedIndices.has(i)) continue;
-                        processedIndices.add(i);
-                        if (confirmedSet.has(cleanText)) continue;
-
-                        // Android重複・雪だるま式増殖の吸収
-                        if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
-                            transcript = transcript.substring(lastConfirmedText.length);
-                        }
-
+                    if (e.results[i].isFinal) {
                         let cleanedText = transcript.trim();
-                        if (cleanedText === "") continue;
 
                         // 【オンオフ対応】フィラー（えー、あの）削除処理
                         if (fillerToggle.checked) {
@@ -275,52 +254,42 @@
                         
                         if (cleanedText === "") continue;
 
-                        confirmedSet.add(cleanText);
-                        lastConfirmedText = result[0].transcript; 
-
+                        // indexss.html の確実なテキスト結合ロジックを適用
+                        const currentFinal = finalSpan.textContent.trim();
+                        let separator = currentFinal !== "" ? "。\n" : "";
+                        if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
                         if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-                        finalParagraphs.push(cleanedText);
-                        hasNewFinal = true;
+                        finalSpan.textContent += separator + cleanedText;
                     } else {
-                        if (!processedIndices.has(i) && !confirmedSet.has(cleanText)) {
-                            interimText += transcript;
-                        }
+                        interimText += transcript;
                     }
                 }
 
-                // 描画バッファリング
-                if (hasNewFinal) {
-                    finalSpan.textContent = finalParagraphs.join("\n");
-                    interimSpan.textContent = '';
+                interimSpan.textContent = interimText;
+                if (interimText || finalSpan.textContent) {
                     outputBox.scrollTop = outputBox.scrollHeight;
-                } else {
-                    interimSpan.textContent = interimText;
-                    if (interimText) {
-                        outputBox.scrollTop = outputBox.scrollHeight;
-                    }
                 }
             };
 
+            // スマホの無音・タイムアウトによる切断を素早くリスタート
             recognition.onend = () => {
                 recognition = null;
-                processedIndices.clear(); 
-                
                 if (isActive) {
                     updateStatus('connecting', "自動再接続を試みています...");
                     clearTimeout(restartTimer);
                     restartTimer = setTimeout(() => {
                         if (isActive) startSpeechEngine();
-                    }, 100); 
+                    }, 200); 
                 }
             };
 
             recognition.onerror = (ev) => {
                 console.log("SpeechRecognition error:", ev.error);
-                if (ev.error === 'no-speech') return; // 無音切断はonendで自動リスタートされるため無視
-                
-                if (ev.error === 'not-allowed') {
-                    updateStatus('error', "エラー: マイクの使用権限がありません。設定から許可してください。");
+                if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
+                    try { recognition.stop(); } catch(e){}
+                } else if (ev.error === 'not-allowed') {
+                    updateStatus('error', "エラー: マイクの使用権限がありません。");
                     stopSpeechEngine(true);
                 } else {
                     updateStatus('connecting', `一時リセット中 (${ev.error})`);
@@ -343,7 +312,7 @@
         updateStatus('', "停止しました。");
         
         if (recognition) {
-            try { recognition.abort(); } catch(e){}
+            try { recognition.stop(); } catch(e){}
             recognition = null;
         }
 
@@ -385,11 +354,6 @@
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        
-        finalParagraphs = [];
-        confirmedSet.clear();
-        processedIndices.clear();
-        lastConfirmedText = "";
         
         updateStatus('connecting', "初期化中...");
         
@@ -443,10 +407,6 @@
         if (confirm("テキストをすべて消去しますか？")) {
             finalSpan.textContent = ""; 
             interimSpan.textContent = "";
-            finalParagraphs = [];
-            confirmedSet.clear();
-            processedIndices.clear();
-            lastConfirmedText = "";
         }
     };
 
