@@ -190,14 +190,13 @@
                 if (result.isFinal) {
                     let cleanedText = result[0].transcript.trim();
                     
-                    // フィラー（えー、あの等）の削除
+                    // フィラーの削除
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     
                     if (cleanedText === "") continue;
 
-                    // 【最重要：Android多重表示対策の絶対防壁】
-                    // 現在の全体の確定テキストを取得し、すでに同じ文章が存在している場合は処理をスキップ
+                    // 【Android多重表示対策】すでに同じ文章が全体テキスト内に存在している場合は処理をスキップ
                     const currentFinalTotal = finalSpan.innerText;
                     if (currentFinalTotal.includes(cleanedText)) {
                         continue; 
@@ -218,7 +217,7 @@
             // 認識中（暫定）ストリームの表示
             interimSpan.innerText = interimText;
             if (interimText.trim() !== "") {
-                addLog(interimText, false); // ログエリアに認識中(グレー文字に相当)を正しく流す
+                addLog(interimText, false);
             }
             outputBox.scrollTop = outputBox.scrollHeight;
         };
@@ -226,8 +225,7 @@
         recognition.onend = () => { 
             if (isActive) {
                 clearTimeout(restartTimeoutId);
-                // 【最重要：PC文字落ち対策】
-                // ブラウザの文字書き出し完了を待つため、安全なクッション時間（150ms）を挟んで再起動
+                // 【PC文字落ち対策】安全なクッション時間（150ms）を挟んで再起動
                 restartTimeoutId = setTimeout(() => {
                     if (isActive && recognition) {
                         try { recognition.start(); } catch(e) {}
@@ -303,8 +301,9 @@
         updateStatus('', "停止しました。");
     };
 
+    // 感度変更時のログ表示を完全削除
     gainSelect.onchange = () => {
-        addLog(`感度を ${gainSelect.value} 倍に調整しました`, false);
+        // 処理なし（ログ出力を廃止）
     };
 
     copyBtn.onclick = async () => {
