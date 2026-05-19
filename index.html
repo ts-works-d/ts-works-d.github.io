@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（フィラー完全自動埋め込み版）</title>
+    <title>逐語録（デバイス選択・詳細ブースト版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -37,20 +37,6 @@
         .error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
 
-        .mic-display-box {
-            background: #e9ecef;
-            padding: 10px;
-            border-radius: 8px;
-            font-size: 0.85em;
-            color: #495057;
-            margin-bottom: 15px;
-            border: 1px solid #ced4da;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .mic-label { font-weight: bold; color: #212529; }
-
         .setting-box { 
             background: #f8f9fa; 
             padding: 15px; 
@@ -68,14 +54,19 @@
             font-size: 0.85em;
             font-weight: bold;
             color: #555;
+            gap: 10px;
         }
-        select#gain-select {
-            padding: 5px 10px;
+        
+        /* セレクトボックスのデザイン統一 */
+        select {
+            padding: 6px 10px;
             border-radius: 6px;
             border: 1px solid #ddd;
             font-size: 14px;
             background: #fff;
             cursor: pointer;
+            max-width: 65%;
+            text-overflow: ellipsis;
         }
 
         .controls { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
@@ -104,7 +95,7 @@
         
         #output-box { 
             width: 100%; 
-            height: calc(100vh - 350px); /* 画面サイズに自動フィット（UIが減った分広げました） */
+            height: calc(100vh - 350px); 
             min-height: 250px;
             padding: 15px; 
             border-radius: 12px; 
@@ -143,21 +134,16 @@
         <span id="conn-text">音声認識：待機中</span>
     </div>
 
-    <div class="mic-display-box">
-        <span class="mic-label">使用中のマイク:</span>
-        <span id="active-mic-name">未取得（認識開始時に取得します）</span>
-    </div>
-
     <div class="setting-box">
         <div class="setting-item">
-            <span>感度調整（ブースト）</span>
-            <select id="gain-select">
-                <option value="1">1 (標準)</option>
-                <option value="2" selected>2 (2倍)</option>
-                <option value="3">3 (3倍)</option>
-                <option value="4">4 (4倍)</option>
-                <option value="5">5 (5倍)</option>
+            <span>使用するマイク選択</span>
+            <select id="mic-select">
+                <option value="">既定のマイク（システム依存）</option>
             </select>
+        </div>
+        <div class="setting-item">
+            <span>感度調整（ブースト）</span>
+            <select id="gain-select"></select>
         </div>
         <div class="setting-item">
             <span>ノイズ軽減（自動最適化）</span>
@@ -181,6 +167,7 @@
 </div>
 
 <script>
+    const micSelect = document.getElementById('mic-select');
     const gainSelect = document.getElementById('gain-select');
     const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
@@ -194,7 +181,15 @@
     const statusDisp = document.getElementById('status-display');
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
-    const activeMicName = document.getElementById('active-mic-name');
+
+    // ブーストの選択肢（1〜20）を1刻みで自動生成
+    for (let i = 1; i <= 20; i++) {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.innerText = `${i}倍` + (i === 1 ? ' (標準)' : '');
+        if (i === 5) opt.selected = true; // 初期値5倍
+        gainSelect.appendChild(opt);
+    }
 
     let recognition = null;
     let isActive = false;
@@ -234,29 +229,34 @@
         }
     }
 
-    async function detectActiveMicName(stream) {
+    // 利用可能なマイク一覧をプルダウンにロードする関数
+    async function loadMicrophones() {
         try {
-            if (!stream) {
-                activeMicName.innerText = "未取得（OS既定のデバイス）";
-                return;
-            }
-            const activeTrack = stream.getAudioTracks()[0];
-            if (!activeTrack) {
-                activeMicName.innerText = "マイクが検出されません";
-                return;
-            }
             const devices = await navigator.mediaDevices.enumerateDevices();
-            const matchingDevice = devices.find(d => d.kind === 'audioinput' && d.label && activeTrack.label.includes(d.label));
+            const currentSelection = micSelect.value;
             
-            if (matchingDevice) {
-                activeMicName.innerText = matchingDevice.label;
-            } else {
-                activeMicName.innerText = activeTrack.label || "デフォルトマイク";
-            }
-        } catch(e) {
-            activeMicName.innerText = "取得失敗 (既定のマイク)";
+            // いったんクリアして初期値をセット
+            micSelect.innerHTML = '<option value="">既定のマイク（システム依存）</option>';
+            
+            let count = 1;
+            devices.forEach(device => {
+                if (device.kind === 'audioinput') {
+                    const opt = document.createElement('option');
+                    opt.value = device.deviceId;
+                    opt.innerText = device.label || `マイク ${count++}`;
+                    if (device.deviceId === currentSelection) {
+                        opt.selected = true;
+                    }
+                    micSelect.appendChild(opt);
+                }
+            });
+        } catch (e) {
+            console.log("マイク一覧の取得に失敗:", e);
         }
     }
+
+    // 最初にページを開いた段階で一度マイク取得を試みる（権限があれば名前が出る）
+    navigator.mediaDevices.enumerateDevices().then(loadMicrophones).catch(()=>{});
 
     async function setupAudioPipeline() {
         if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
@@ -274,8 +274,26 @@
             }
         };
 
-        hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
-        await detectActiveMicName(hardwareStream);
+        // 選択された特定のデバイスIDがあれば条件に指定する
+        if (micSelect.value) {
+            constraints.audio.deviceId = { exact: micSelect.value };
+        }
+
+        try {
+            hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+            // もし指定デバイスでの起動に失敗した場合は、フォールバックとして既定マイクで再試行
+            if (constraints.audio.deviceId) {
+                delete constraints.audio.deviceId;
+                hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
+                micSelect.value = ""; // プルダウンを既定に戻す
+            } else {
+                throw err;
+            }
+        }
+
+        // 権限許可が下りるとマイクの「名前」が綺麗に取得できるようになるため再ロード
+        await loadMicrophones();
 
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -287,12 +305,12 @@
         audioSource = audioContext.createMediaStreamSource(hardwareStream);
         gainNode = audioContext.createGain();
         
+        // 1〜20倍の範囲で感度を適用
         const userMultiplier = parseFloat(gainSelect.value) || 1.0;
         gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
 
         audioSource.connect(gainNode);
         
-        recognitionDestination = document.createElement('div'); // ダミー
         recognitionDestination = audioContext.createMediaStreamDestination();
         gainNode.connect(recognitionDestination);
 
@@ -351,7 +369,7 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        // 【ロジックに完全埋め込み】スイッチ判定を無くし、常に100%強制実行
+                        // 【常時オン固定】フィラー自動削除ロジック
                         const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                         cleanedText = cleanedText.replace(fillerRegex, "")
                                                  .replace(/[、\s]?(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)[、\s]?/g, " ")
@@ -368,7 +386,6 @@
                         hasNewFinal = true;
                     } else {
                         if (!processedIndices.has(i) && !confirmedSet.has(cleanText)) {
-                            // 途中表示の段階でも常にフィラーを除去して見せる
                             const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                             let tempInterim = transcript.replace(fillerRegex, "")
                                                          .replace(/[、\s]?(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)[、\s]?/g, " ")
@@ -392,6 +409,7 @@
                 }
             };
 
+            // 自動再起動ループ
             recognition.onend = () => {
                 recognition = null;
                 processedIndices.clear(); 
@@ -458,6 +476,7 @@
         interimSpan.textContent = "";
     }
 
+    // デバイス、感度、ノイズ軽減が切り替わったときのリアルタイム再接続処理
     function handleConfigChange() {
         if (!isActive) return;
         
@@ -465,7 +484,7 @@
         configTimeout = setTimeout(async () => {
             if (isActive) {
                 try {
-                    updateStatus('connecting', "設定を瞬時適用中...");
+                    updateStatus('connecting', "マイク・設定の切り替え中...");
                     if (recognition) {
                         recognition.onend = null; 
                         try { recognition.abort(); } catch(e){}
@@ -507,6 +526,8 @@
         stopSpeechEngine(true); 
     };
 
+    // イベントバインド（動的に変更があったら処理を差し替える）
+    micSelect.onchange = handleConfigChange;
     gainSelect.onchange = handleConfigChange;
     noiseToggle.onchange = handleConfigChange;
 
