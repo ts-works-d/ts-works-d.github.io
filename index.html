@@ -3,58 +3,98 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（Android完全復活版）</title>
+    <title>逐語録（自動最適化版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
-        body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 800px; margin: auto; color: #333; }
-        .card { background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        
+        body { 
+            font-family: 'Helvetica Neue', Arial, sans-serif; 
+            padding: 10px; 
+            background: #f4f7f9; 
+            margin: 0; 
+            color: #333;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: center;
+        }
+
+        /* ウィンドウのサイズに合わせて横幅いっぱいに広がる設定 */
+        .card { 
+            background: #fff; 
+            padding: 20px; 
+            border-radius: 15px; 
+            box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+            width: 100%;
+            max-width: 100%; /* ウィンドウ幅に完全に合わせる */
+            box-sizing: border-box;
+        }
+
         h2 { margin: 0 0 15px; font-size: 1.2em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        
         .conn-status { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 15px; font-weight: bold; font-size: 0.9em; }
         .indicator { width: 12px; height: 12px; border-radius: 50%; background: #ccc; }
         .online { background: var(--success); box-shadow: 0 0 8px var(--success); }
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
-        .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
-        .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
-        .controls { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
-        button { flex: 1; min-width: 80px; padding: 12px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; transition: 0.2s; color: white; }
-        #start { background: var(--primary); }
-        #stop { background: var(--danger); }
+
+        .controls { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+        
+        button { 
+            flex: 1; 
+            min-width: 70px; 
+            padding: 12px 8px; 
+            font-size: 14px; 
+            font-weight: bold; 
+            cursor: pointer; 
+            border: none; 
+            border-radius: 8px; 
+            transition: 0.2s; 
+            color: white; 
+            white-space: nowrap;
+        }
+        #start { background: var(--primary); flex: 1.5; } /* 開始ボタンを少し広めに */
+        #stop { background: var(--danger); flex: 1.5; }
         #copy { background: var(--info); }
         #save { background: var(--success); }
         #clear { background: var(--secondary); }
         button:disabled { background: #ccc !important; cursor: not-allowed; opacity: 0.6; }
-        .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 8px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; word-break: break-all; }
-        #output-box { width: 100%; height: 500px; padding: 20px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
+
+        .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; word-break: break-all; }
+        
+        /* 画面サイズに合わせて高さも自動調整。文字量が多くなればスクロールします */
+        #output-box { 
+            width: 100%; 
+            height: calc(100vh - 190px); /* 画面の高さからボタン類のパーツ分を引いたサイズに自動フィット */
+            min-height: 300px;
+            padding: 15px; 
+            border-radius: 12px; 
+            border: 1px solid #eef; 
+            background: #fdfdfd; 
+            overflow-y: auto; 
+            line-height: 1.8; 
+            font-size: 16px; 
+            box-sizing: border-box; 
+        }
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
 
-        .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
-        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--primary); }
-        input:checked + .slider:before { transform: translateX(14px); }
+        /* スマホなど画面が特に狭い時の微調整 */
+        @media (max-width: 480px) {
+            body { padding: 5px; }
+            .card { padding: 15px; border-radius: 0; }
+            button { font-size: 13px; padding: 10px 4px; }
+            #output-box { height: calc(100vh - 170px); }
+        }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>逐語録（Android完全復活版）</h2>
+    <h2>逐語録</h2>
     <div class="conn-status">
         <div id="indicator" class="indicator"></div>
         <span id="conn-text">音声認識：待機中</span>
-    </div>
-
-    <div class="setting-box">
-        <div class="setting-label">
-            <span>フィラー削除（えー、あの等）</span>
-            <label class="switch">
-                <input type="checkbox" id="filler-toggle" checked>
-                <span class="slider"></span>
-            </label>
-        </div>
     </div>
 
     <div class="controls">
@@ -70,7 +110,6 @@
 </div>
 
 <script>
-    const fillerToggle = document.getElementById('filler-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -87,7 +126,7 @@
     let isActive = false;
     let restartTimer = null;
     
-    // Android重複防止用のオリジナルバッファ
+    // 重複防止用バッファ
     let finalParagraphs = [];
     let confirmedSet = new Set();
     let processedIndices = new Set();
@@ -134,7 +173,6 @@
                 updateStatus('online', "お話しください。音声を認識しています。");
             };
 
-            // Androidで完璧に文字を制御していたロジックを完全復元
             recognition.onresult = (e) => {
                 let interimText = '';
                 let hasNewFinal = false;
@@ -158,10 +196,9 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        if (fillerToggle.checked) {
-                            const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                            cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-                        }
+                        // 【常時オン】フィラー削除ロジックを直接組み込み
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                         
                         if (cleanedText === "") continue;
 
@@ -191,7 +228,6 @@
                 }
             };
 
-            // 無音時の安全な自動再起動ループ
             recognition.onend = () => {
                 recognition = null;
                 processedIndices.clear(); 
