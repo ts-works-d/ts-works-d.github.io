@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（デバイス選択・詳細ブースト版）</title>
+    <title>逐語録（デバイス選択修正版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -57,7 +57,6 @@
             gap: 10px;
         }
         
-        /* セレクトボックスのデザイン統一 */
         select {
             padding: 6px 10px;
             border-radius: 6px;
@@ -182,12 +181,12 @@
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
 
-    // ブーストの選択肢（1〜20）を1刻みで自動生成
+    // ブースト倍率の生成（1〜20）
     for (let i = 1; i <= 20; i++) {
         const opt = document.createElement('option');
         opt.value = i;
         opt.innerText = `${i}倍` + (i === 1 ? ' (標準)' : '');
-        if (i === 5) opt.selected = true; // 初期値5倍
+        if (i === 5) opt.selected = true; 
         gainSelect.appendChild(opt);
     }
 
@@ -229,13 +228,13 @@
         }
     }
 
-    // 利用可能なマイク一覧をプルダウンにロードする関数
+    // マイク一覧の取得（フリーズ原因だったため非同期処理を完全安全化）
     async function loadMicrophones() {
         try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
             const devices = await navigator.mediaDevices.enumerateDevices();
             const currentSelection = micSelect.value;
             
-            // いったんクリアして初期値をセット
             micSelect.innerHTML = '<option value="">既定のマイク（システム依存）</option>';
             
             let count = 1;
@@ -251,12 +250,9 @@
                 }
             });
         } catch (e) {
-            console.log("マイク一覧の取得に失敗:", e);
+            console.log("マイク一覧の取得をスキップ（認識動作には影響ありません）", e);
         }
     }
-
-    // 最初にページを開いた段階で一度マイク取得を試みる（権限があれば名前が出る）
-    navigator.mediaDevices.enumerateDevices().then(loadMicrophones).catch(()=>{});
 
     async function setupAudioPipeline() {
         if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
@@ -274,7 +270,6 @@
             }
         };
 
-        // 選択された特定のデバイスIDがあれば条件に指定する
         if (micSelect.value) {
             constraints.audio.deviceId = { exact: micSelect.value };
         }
@@ -282,18 +277,17 @@
         try {
             hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
         } catch (err) {
-            // もし指定デバイスでの起動に失敗した場合は、フォールバックとして既定マイクで再試行
             if (constraints.audio.deviceId) {
                 delete constraints.audio.deviceId;
                 hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
-                micSelect.value = ""; // プルダウンを既定に戻す
+                micSelect.value = ""; 
             } else {
                 throw err;
             }
         }
 
-        // 権限許可が下りるとマイクの「名前」が綺麗に取得できるようになるため再ロード
-        await loadMicrophones();
+        // マイクへのアクセスが成功した「後」に安全にリストを更新する（絶対フリーズさせない）
+        loadMicrophones().catch(()=>{});
 
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -305,7 +299,6 @@
         audioSource = audioContext.createMediaStreamSource(hardwareStream);
         gainNode = audioContext.createGain();
         
-        // 1〜20倍の範囲で感度を適用
         const userMultiplier = parseFloat(gainSelect.value) || 1.0;
         gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
 
@@ -409,7 +402,6 @@
                 }
             };
 
-            // 自動再起動ループ
             recognition.onend = () => {
                 recognition = null;
                 processedIndices.clear(); 
@@ -476,7 +468,6 @@
         interimSpan.textContent = "";
     }
 
-    // デバイス、感度、ノイズ軽減が切り替わったときのリアルタイム再接続処理
     function handleConfigChange() {
         if (!isActive) return;
         
@@ -526,7 +517,6 @@
         stopSpeechEngine(true); 
     };
 
-    // イベントバインド（動的に変更があったら処理を差し替える）
     micSelect.onchange = handleConfigChange;
     gainSelect.onchange = handleConfigChange;
     noiseToggle.onchange = handleConfigChange;
