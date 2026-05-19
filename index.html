@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（自動最適化版）</title>
+    <title>逐語録（フル機能・自動フィット版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -18,14 +18,14 @@
             justify-content: center;
         }
 
-        /* ウィンドウのサイズに合わせて横幅いっぱいに広がる設定 */
+        /* ウィンドウのサイズに合わせて横幅いっぱいに広がる設定（維持） */
         .card { 
             background: #fff; 
             padding: 20px; 
             border-radius: 15px; 
             box-shadow: 0 10px 25px rgba(0,0,0,0.05);
             width: 100%;
-            max-width: 100%; /* ウィンドウ幅に完全に合わせる */
+            max-width: 100%; 
             box-sizing: border-box;
         }
 
@@ -37,6 +37,34 @@
         .connecting { background: var(--warning); animation: blink 1s infinite; }
         .error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
         @keyframes blink { 50% { opacity: 0.5; } }
+
+        /* 設定ボックス（ブースト・ノイズ軽減・フィラー削除） */
+        .setting-box { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 10px; 
+            margin-bottom: 15px; 
+            border: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.85em;
+            font-weight: bold;
+            color: #555;
+        }
+        select#gain-select {
+            padding: 5px 10px;
+            border-radius: 6px;
+            border: 1px solid #ddd;
+            font-size: 14px;
+            background: #fff;
+            cursor: pointer;
+        }
 
         .controls { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
         
@@ -53,7 +81,7 @@
             color: white; 
             white-space: nowrap;
         }
-        #start { background: var(--primary); flex: 1.5; } /* 開始ボタンを少し広めに */
+        #start { background: var(--primary); flex: 1.5; }
         #stop { background: var(--danger); flex: 1.5; }
         #copy { background: var(--info); }
         #save { background: var(--success); }
@@ -62,11 +90,11 @@
 
         .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; word-break: break-all; }
         
-        /* 画面サイズに合わせて高さも自動調整。文字量が多くなればスクロールします */
+        /* 画面の高さに自動フィットする出力ボックス（維持） */
         #output-box { 
             width: 100%; 
-            height: calc(100vh - 190px); /* 画面の高さからボタン類のパーツ分を引いたサイズに自動フィット */
-            min-height: 300px;
+            height: calc(100vh - 350px); /* 設定ボックスが増えた分、計算を調整 */
+            min-height: 250px;
             padding: 15px; 
             border-radius: 12px; 
             border: 1px solid #eef; 
@@ -79,12 +107,19 @@
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
 
-        /* スマホなど画面が特に狭い時の微調整 */
+        /* スイッチ（オン/オフ用） */
+        .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--primary); }
+        input:checked + .slider:before { transform: translateX(14px); }
+
         @media (max-width: 480px) {
             body { padding: 5px; }
             .card { padding: 15px; border-radius: 0; }
             button { font-size: 13px; padding: 10px 4px; }
-            #output-box { height: calc(100vh - 170px); }
+            #output-box { height: calc(100vh - 330px); }
         }
     </style>
 </head>
@@ -95,6 +130,33 @@
     <div class="conn-status">
         <div id="indicator" class="indicator"></div>
         <span id="conn-text">音声認識：待機中</span>
+    </div>
+
+    <div class="setting-box">
+        <div class="setting-item">
+            <span>感度調整（ブースト）</span>
+            <select id="gain-select">
+                <option value="1">1 (標準)</option>
+                <option value="2" selected>2 (2倍)</option>
+                <option value="3">3 (3倍)</option>
+                <option value="4">4 (4倍)</option>
+                <option value="5">5 (5倍)</option>
+            </select>
+        </div>
+        <div class="setting-item">
+            <span>フィラー削除（えー、あの等）</span>
+            <label class="switch">
+                <input type="checkbox" id="filler-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
+        <div class="setting-item">
+            <span>ノイズ軽減（自動最適化）</span>
+            <label class="switch">
+                <input type="checkbox" id="noise-toggle" checked>
+                <span class="slider"></span>
+            </label>
+        </div>
     </div>
 
     <div class="controls">
@@ -110,6 +172,9 @@
 </div>
 
 <script>
+    const gainSelect = document.getElementById('gain-select');
+    const fillerToggle = document.getElementById('filler-toggle');
+    const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -125,6 +190,14 @@
     let recognition = null;
     let isActive = false;
     let restartTimer = null;
+    let configTimeout = null;
+    
+    // オーディオ処理パイプライン
+    let audioContext = null;
+    let audioSource = null;
+    let gainNode = null;
+    let hardwareStream = null;
+    let recognitionDestination = null;
     
     // 重複防止用バッファ
     let finalParagraphs = [];
@@ -136,7 +209,7 @@
         statusDisp.innerText = msg;
         indicator.className = "indicator " + type;
         if(type === 'online') { 
-            connText.innerText = "音声認識：認識中..."; 
+            connText.innerText = "音声認識：稼働中"; 
             statusDisp.style.background = "#d4edda"; 
             statusDisp.style.color = "#155724";
         } else if(type === 'error') { 
@@ -144,7 +217,7 @@
             statusDisp.style.background = "#f8d7da"; 
             statusDisp.style.color = "#721c24";
         } else if(type === 'connecting') {
-            connText.innerText = "音声認識 : 起動中..."; 
+            connText.innerText = "音声認識 : 接続処理中..."; 
             statusDisp.style.background = "#fff3cd"; 
             statusDisp.style.color = "#856404";
         } else { 
@@ -154,7 +227,51 @@
         }
     }
 
-    function startSpeechEngine() {
+    // 感度（ブースト）とノイズ軽減を適用するオーディオパイプラインの構築
+    async function setupAudioPipeline() {
+        if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
+        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
+        if (hardwareStream) {
+            hardwareStream.getTracks().forEach(t => t.stop());
+            hardwareStream = null;
+        }
+
+        const constraints = {
+            audio: {
+                // ノイズ軽減（オン/オフ連動）
+                echoCancellation: noiseToggle.checked,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: false // 手動の感度調整を優先するためオフ
+            }
+        };
+
+        hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+        }
+
+        audioSource = audioContext.createMediaStreamSource(hardwareStream);
+        gainNode = audioContext.createGain();
+        
+        // 感度（ブースト倍率）を適用
+        const userMultiplier = parseFloat(gainSelect.value) || 1.0;
+        gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
+
+        audioSource.connect(gainNode);
+        
+        // スピーカーには繋がず、認識エンジン専用の仮想の宛先にのみ接続
+        recognitionDestination = audioContext.createMediaStreamDestination();
+        gainNode.connect(recognitionDestination);
+
+        return recognitionDestination.stream;
+    }
+
+    // 音声認識エンジンの起動（加工された音データのストリームを直結）
+    function startSpeechEngine(pipedStream) {
         if (!isActive) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -169,11 +286,22 @@
             recognition.interimResults = true;
             recognition.continuous = true; 
 
+            // 加工済みの音データトラックを音声認識エンジンに注入（Chromeバグ対策）
+            if (pipedStream && pipedStream.getAudioTracks().length > 0) {
+                const track = pipedStream.getAudioTracks()[0];
+                if (recognition.audioTrack !== undefined) {
+                    recognition.audioTrack = track;
+                }
+                // Chrome系の深層プロパティへの完全注入
+                try { recognition.stream = pipedStream; } catch(e) {}
+            }
+
             recognition.onstart = () => {
-                updateStatus('online', "お話しください。音声を認識しています。");
+                updateStatus('online', "音声を認識しています。お話しください。");
             };
 
             recognition.onresult = (e) => {
+                if (!isActive) return;
                 let interimText = '';
                 let hasNewFinal = false;
 
@@ -189,6 +317,7 @@
                         processedIndices.add(i);
                         if (confirmedSet.has(cleanText)) continue;
 
+                        // 重複ガード処理
                         if (lastConfirmedText && transcript.startsWith(lastConfirmedText) && transcript !== lastConfirmedText) {
                             transcript = transcript.substring(lastConfirmedText.length);
                         }
@@ -196,9 +325,11 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        // 【常時オン】フィラー削除ロジックを直接組み込み
-                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                        // フィラー削除処理（スイッチのオン/オフ連動）
+                        if (fillerToggle.checked) {
+                            const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                            cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
+                        }
                         
                         if (cleanedText === "") continue;
 
@@ -228,14 +359,20 @@
                 }
             };
 
+            // 自動再起動ループ
             recognition.onend = () => {
                 recognition = null;
                 processedIndices.clear(); 
                 
                 if (isActive) {
                     clearTimeout(restartTimer);
-                    restartTimer = setTimeout(() => {
-                        if (isActive) startSpeechEngine();
+                    restartTimer = setTimeout(async () => {
+                        if (isActive) {
+                            try {
+                                const stream = await setupAudioPipeline();
+                                startSpeechEngine(stream);
+                            } catch(e){}
+                        }
                     }, 200); 
                 }
             };
@@ -246,7 +383,7 @@
                 
                 if (ev.error === 'not-allowed') {
                     updateStatus('error', "エラー: マイクの使用権限がありません。");
-                    stopSpeechEngine();
+                    stopSpeechEngine(true);
                 } else {
                     try { recognition.abort(); } catch(e){}
                 }
@@ -254,14 +391,16 @@
 
             recognition.start();
         } catch(e) {
-            updateStatus('error', "起動失敗: " + e.message);
+            updateStatus('error', "エンジンの起動失敗: " + e.message);
             recognition = null;
         }
     }
 
-    function stopSpeechEngine() {
+    // プロセスとハードウェアを完全に停止
+    function stopSpeechEngine(closeHardware = false) {
         isActive = false; 
         clearTimeout(restartTimer);
+        clearTimeout(configTimeout);
         startBtn.disabled = false;
         stopBtn.disabled = true;
         updateStatus('', "停止しました。");
@@ -273,11 +412,50 @@
             } catch(e){}
             recognition = null;
         }
+
+        if (closeHardware) {
+            if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
+            if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
+            if (hardwareStream) {
+                hardwareStream.getTracks().forEach(track => track.stop());
+                hardwareStream = null;
+            }
+            if (audioContext && audioContext.state !== 'closed') {
+                try { audioContext.suspend(); } catch(e){}
+            }
+        }
         interimSpan.textContent = "";
     }
 
-    startBtn.onclick = () => {
-        stopSpeechEngine(); 
+    // 感度（ブースト）やノイズ軽減の設定が「切り替わった瞬間」の処理
+    // 古い認識エンジンを物理解体し、新たなオーディオ設定でゼロから再起動する
+    function handleConfigChange() {
+        if (!isActive) return;
+        
+        clearTimeout(configTimeout);
+        configTimeout = setTimeout(async () => {
+            if (isActive) {
+                try {
+                    updateStatus('connecting', "設定を瞬時適用中...");
+                    // 1. 古いエンジンとループ処理を完全破棄
+                    if (recognition) {
+                        recognition.onend = null; 
+                        try { recognition.abort(); } catch(e){}
+                        recognition = null;
+                    }
+                    // 2. 新設定でオーディオパイプラインを再結線
+                    const stream = await setupAudioPipeline();
+                    // 3. まったく新しいエンジンに噛ませて再起動
+                    startSpeechEngine(stream);
+                } catch(e) {
+                    updateStatus('error', e.message);
+                }
+            }
+        }, 400); 
+    }
+
+    startBtn.onclick = async () => {
+        stopSpeechEngine(true); // 二重フリーズ防止リセット
         
         isActive = true;
         startBtn.disabled = true;
@@ -288,13 +466,27 @@
         processedIndices.clear();
         lastConfirmedText = "";
         
-        updateStatus('connecting', "音声エンジンを起動中...");
-        startSpeechEngine();
+        updateStatus('connecting', "マイクを初期化中...");
+        
+        try {
+            // ブースト・ノイズ軽減が適用されたストリームを構築
+            const stream = await setupAudioPipeline();
+            // そのストリームを認識エンジンに渡して開始
+            startSpeechEngine(stream);
+        } catch (e) {
+            updateStatus('error', e.message);
+            stopSpeechEngine(true);
+        }
     };
 
     stopBtn.onclick = () => {
-        stopSpeechEngine(); 
+        stopSpeechEngine(true); 
     };
+
+    // 設定プルダウンやスイッチが動いたときのイベントバインド
+    gainSelect.onchange = handleConfigChange;
+    noiseToggle.onchange = handleConfigChange;
+    fillerToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
         const text = finalSpan.textContent;
