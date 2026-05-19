@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（デバイス選択修正版）</title>
+    <title>逐語録（デバイス強制取得・完全版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -137,12 +137,15 @@
         <div class="setting-item">
             <span>使用するマイク選択</span>
             <select id="mic-select">
-                <option value="">既定のマイク（システム依存）</option>
+                <option value="">マイクを検出中...</option>
             </select>
         </div>
         <div class="setting-item">
-            <span>感度調整（ブースト）</span>
-            <select id="gain-select"></select>
+            <span>音量自動調整（オートゲイン）</span>
+            <label class="switch">
+                <input type="checkbox" id="agc-toggle" checked>
+                <span class="slider"></span>
+            </label>
         </div>
         <div class="setting-item">
             <span>ノイズ軽減（自動最適化）</span>
@@ -161,13 +164,13 @@
         <button id="clear">クリア</button>
     </div>
 
-    <div class="status-area" id="status-display">「認識開始」を押してください。</div>
+    <div class="status-area" id="status-display">マイク設定を読み込んでいます...</div>
     <div id="output-box"><span id="final-span"></span><span id="interim-span"></span></div>
 </div>
 
 <script>
     const micSelect = document.getElementById('mic-select');
-    const gainSelect = document.getElementById('gain-select');
+    const agcToggle = document.getElementById('agc-toggle');
     const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
@@ -181,25 +184,11 @@
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
 
-    // ブースト倍率の生成（1〜20）
-    for (let i = 1; i <= 20; i++) {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.innerText = `${i}倍` + (i === 1 ? ' (標準)' : '');
-        if (i === 5) opt.selected = true; 
-        gainSelect.appendChild(opt);
-    }
-
     let recognition = null;
     let isActive = false;
     let restartTimer = null;
     let configTimeout = null;
-    
-    let audioContext = null;
-    let audioSource = null;
-    let gainNode = null;
-    let hardwareStream = null;
-    let recognitionDestination = null;
+    let globalStream = null; 
     
     let finalParagraphs = [];
     let confirmedSet = new Set();
@@ -228,89 +217,55 @@
         }
     }
 
-    // マイク一覧の取得（フリーズ原因だったため非同期処理を完全安全化）
-    async function loadMicrophones() {
+    // 【重要】ブラウザのセキュリティロックを解除して全デバイス名を強制ロードする関数
+    async function forceEnumerateDevices() {
+        let tempStream = null;
         try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            // 最初にダミーで一瞬マイクを開く（これによりブラウザのロックが完全に解除され、全マイク名が露出します）
+            tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            
             const devices = await navigator.mediaDevices.enumerateDevices();
             const currentSelection = micSelect.value;
             
             micSelect.innerHTML = '<option value="">既定のマイク（システム依存）</option>';
             
             let count = 1;
+            let foundInput = false;
+            
             devices.forEach(device => {
                 if (device.kind === 'audioinput') {
+                    foundInput = true;
                     const opt = document.createElement('option');
                     opt.value = device.deviceId;
-                    opt.innerText = device.label || `マイク ${count++}`;
+                    // デバイス名が空文字（Androidバグ等）の場合は連番を振る
+                    opt.innerText = device.label || `外部マイク / 入力デバイス ${count++}`;
                     if (device.deviceId === currentSelection) {
                         opt.selected = true;
                     }
                     micSelect.appendChild(opt);
                 }
             });
+
+            if(!foundInput) {
+                micSelect.innerHTML = '<option value="">マイクが見つかりません</option>';
+            }
+            updateStatus('', "「認識開始」を押してください。");
         } catch (e) {
-            console.log("マイク一覧の取得をスキップ（認識動作には影響ありません）", e);
+            console.error(e);
+            micSelect.innerHTML = '<option value="">既定のマイク（システム依存）</option>';
+            updateStatus('', "マイク権限を許可して再読み込みしてください。");
+        } finally {
+            // ダミー用に開いたマイクは即座に閉じる
+            if (tempStream) {
+                tempStream.getTracks().forEach(track => track.stop());
+            }
         }
     }
 
-    async function setupAudioPipeline() {
-        if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
-        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-        if (hardwareStream) {
-            hardwareStream.getTracks().forEach(t => t.stop());
-            hardwareStream = null;
-        }
+    // ページロード完了時に強制取得を走らせる
+    window.addEventListener('DOMContentLoaded', forceEnumerateDevices);
 
-        const constraints = {
-            audio: {
-                echoCancellation: noiseToggle.checked,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: false 
-            }
-        };
-
-        if (micSelect.value) {
-            constraints.audio.deviceId = { exact: micSelect.value };
-        }
-
-        try {
-            hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (err) {
-            if (constraints.audio.deviceId) {
-                delete constraints.audio.deviceId;
-                hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
-                micSelect.value = ""; 
-            } else {
-                throw err;
-            }
-        }
-
-        // マイクへのアクセスが成功した「後」に安全にリストを更新する（絶対フリーズさせない）
-        loadMicrophones().catch(()=>{});
-
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-        }
-
-        audioSource = audioContext.createMediaStreamSource(hardwareStream);
-        gainNode = audioContext.createGain();
-        
-        const userMultiplier = parseFloat(gainSelect.value) || 1.0;
-        gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
-
-        audioSource.connect(gainNode);
-        
-        recognitionDestination = audioContext.createMediaStreamDestination();
-        gainNode.connect(recognitionDestination);
-
-        return recognitionDestination.stream;
-    }
-
-    function startSpeechEngine(pipedStream) {
+    function startSpeechEngine() {
         if (!isActive) return;
 
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -324,14 +279,6 @@
             recognition.lang = 'ja-JP';
             recognition.interimResults = true;
             recognition.continuous = true; 
-
-            if (pipedStream && pipedStream.getAudioTracks().length > 0) {
-                const track = pipedStream.getAudioTracks()[0];
-                if (recognition.audioTrack !== undefined) {
-                    recognition.audioTrack = track;
-                }
-                try { recognition.stream = pipedStream; } catch(e) {}
-            }
 
             recognition.onstart = () => {
                 updateStatus('online', "音声を認識しています。お話しください。");
@@ -362,7 +309,7 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        // 【常時オン固定】フィラー自動削除ロジック
+                        // 【常時オン固定】フィラー自動削除
                         const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                         cleanedText = cleanedText.replace(fillerRegex, "")
                                                  .replace(/[、\s]?(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)[、\s]?/g, " ")
@@ -408,14 +355,11 @@
                 
                 if (isActive) {
                     clearTimeout(restartTimer);
-                    restartTimer = setTimeout(async () => {
+                    restartTimer = setTimeout(() => {
                         if (isActive) {
-                            try {
-                                const stream = await setupAudioPipeline();
-                                startSpeechEngine(stream);
-                            } catch(e){}
+                            startSpeechEngine();
                         }
-                    }, 200); 
+                    }, 250); 
                 }
             };
 
@@ -425,7 +369,7 @@
                 
                 if (ev.error === 'not-allowed') {
                     updateStatus('error', "エラー: マイクの使用権限がありません。");
-                    stopSpeechEngine(true);
+                    stopSpeechEngine();
                 } else {
                     try { recognition.abort(); } catch(e){}
                 }
@@ -438,7 +382,40 @@
         }
     }
 
-    function stopSpeechEngine(closeHardware = false) {
+    // 選択された指定マイクをシステムレベルでバインドして有効化する
+    async function activateMicrophoneDevice() {
+        if (globalStream) {
+            globalStream.getTracks().forEach(t => t.stop());
+            globalStream = null;
+        }
+
+        const constraints = {
+            audio: {
+                echoCancellation: noiseToggle.checked,
+                noiseSuppression: noiseToggle.checked,
+                autoGainControl: agcToggle.checked
+            }
+        };
+
+        // 選択されたデバイスIDがある場合、ブラウザへストレートに要求を通す
+        if (micSelect.value) {
+            constraints.audio.deviceId = { exact: micSelect.value };
+        }
+
+        try {
+            globalStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (err) {
+            console.warn("指定デバイスでの起動失敗。既定マイクでフォールバックします。", err);
+            if (constraints.audio.deviceId) {
+                delete constraints.audio.deviceId;
+                globalStream = await navigator.mediaDevices.getUserMedia(constraints);
+            } else {
+                throw err;
+            }
+        }
+    }
+
+    function stopSpeechEngine() {
         isActive = false; 
         clearTimeout(restartTimer);
         clearTimeout(configTimeout);
@@ -454,44 +431,33 @@
             recognition = null;
         }
 
-        if (closeHardware) {
-            if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
-            if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-            if (hardwareStream) {
-                hardwareStream.getTracks().forEach(track => track.stop());
-                hardwareStream = null;
-            }
-            if (audioContext && audioContext.state !== 'closed') {
-                try { audioContext.suspend(); } catch(e){}
-            }
+        if (globalStream) {
+            globalStream.getTracks().forEach(track => track.stop());
+            globalStream = null;
         }
         interimSpan.textContent = "";
     }
 
-    function handleConfigChange() {
+    async function handleConfigChange() {
         if (!isActive) return;
         
         clearTimeout(configTimeout);
         configTimeout = setTimeout(async () => {
             if (isActive) {
-                try {
-                    updateStatus('connecting', "マイク・設定の切り替え中...");
-                    if (recognition) {
-                        recognition.onend = null; 
-                        try { recognition.abort(); } catch(e){}
-                        recognition = null;
-                    }
-                    const stream = await setupAudioPipeline();
-                    startSpeechEngine(stream);
-                } catch(e) {
-                    updateStatus('error', e.message);
+                updateStatus('connecting', "設定・マイクを切り替え中...");
+                if (recognition) {
+                    recognition.onend = null; 
+                    try { recognition.abort(); } catch(e){}
+                    recognition = null;
                 }
+                await activateMicrophoneDevice();
+                startSpeechEngine();
             }
         }, 400); 
     }
 
     startBtn.onclick = async () => {
-        stopSpeechEngine(true); 
+        stopSpeechEngine(); 
         
         isActive = true;
         startBtn.disabled = true;
@@ -502,23 +468,24 @@
         processedIndices.clear();
         lastConfirmedText = "";
         
-        updateStatus('connecting', "マイクを初期化中...");
+        updateStatus('connecting', "マイクを有効化中...");
         
         try {
-            const stream = await setupAudioPipeline();
-            startSpeechEngine(stream);
+            await activateMicrophoneDevice();
+            startSpeechEngine();
         } catch (e) {
-            updateStatus('error', e.message);
-            stopSpeechEngine(true);
+            updateStatus('error', "マイク起動失敗: " + e.message);
+            stopSpeechEngine();
         }
     };
 
     stopBtn.onclick = () => {
-        stopSpeechEngine(true); 
+        stopSpeechEngine(); 
     };
 
+    // 設定変更イベント
     micSelect.onchange = handleConfigChange;
-    gainSelect.onchange = handleConfigChange;
+    agcToggle.onchange = handleConfigChange;
     noiseToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
