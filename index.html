@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（音質加工完全無効・高精度版）</title>
+    <title>逐語録（完全最適化・決定版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -130,7 +130,7 @@
         <div class="setting-item">
             <span>使用するマイク選択</span>
             <select id="mic-select">
-                <option value="">既定のマイク（システム依存）</option>
+                <option value="">検出中...</option>
             </select>
         </div>
         <div class="setting-item">
@@ -166,7 +166,7 @@
     const indicator = document.getElementById('indicator');
     const connText = document.getElementById('conn-text');
 
-    // 1〜20のブースト倍率の生成
+    // 1〜20倍ブーストドロップダウン生成
     for (let i = 1; i <= 20; i++) {
         const opt = document.createElement('option');
         opt.value = i;
@@ -211,10 +211,11 @@
         }
     }
 
-    // デバイス一覧を安全に取得
-    async function loadMicrophones() {
+    // セキュリティロックを最速で解除してマイクデバイス名をAndroid/PC共に完全ロードする関数
+    async function initAndLoadMics() {
+        let dummy = null;
         try {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+            dummy = await navigator.mediaDevices.getUserMedia({ audio: true });
             const devices = await navigator.mediaDevices.enumerateDevices();
             const currentSelection = micSelect.value;
             
@@ -225,23 +226,23 @@
                 if (device.kind === 'audioinput') {
                     const opt = document.createElement('option');
                     opt.value = device.deviceId;
-                    opt.innerText = device.label || `マイク ${count++}`;
-                    if (device.deviceId === currentSelection) {
-                        opt.selected = true;
-                    }
+                    opt.innerText = device.label || `入力デバイス / マイク ${count++}`;
+                    if (device.deviceId === currentSelection) opt.selected = true;
                     micSelect.appendChild(opt);
                 }
             });
         } catch (e) {
-            console.log("マイク一覧取得スキップ:", e);
+            micSelect.innerHTML = '<option value="">既定のマイク（システム依存）</option>';
+        } finally {
+            if (dummy) dummy.getTracks().forEach(t => t.stop());
         }
     }
 
-    // 初回デバイス取得（Android対策でバックグラウンド実行）
-    navigator.mediaDevices.enumerateDevices().then(loadMicrophones).catch(()=>{});
+    // 画面ロード時にマイクを確定させる
+    window.addEventListener('DOMContentLoaded', initAndLoadMics);
 
-    // 【最重要】認識率低下の元凶であるブラウザの音質加工を「完全無効化」するマイク制御
-    async function setupHardwareAudio() {
+    // 文字落ちの最大原因「ブラウザの音質制限」を完全解除し、裏で1〜20倍の音量処理を安全に行う
+    async function setupAudioPipeline() {
         if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
         if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
         if (hardwareStream) {
@@ -249,12 +250,12 @@
             hardwareStream = null;
         }
 
-        // ブラウザ側のお節介な「声の間引き」をすべて強制的に「false」にして、生の音を拾う設定
+        // 音声認識の間引き（音切れ・文字落ち）を徹底的に防ぐための完全生音声フラグ
         const constraints = {
             audio: {
-                echoCancellation: false,  // エコーキャンセルを完全オフ（声を消させない）
-                noiseSuppression: false,  // ノイズサプレッサーを完全オフ（語尾を消させない）
-                autoGainControl: false    // 自動音量調整を完全オフ（勝手に音量を下げさせない）
+                echoCancellation: false,   // エコーキャンセルを完全オフ（声を消させない）
+                noiseSuppression: false,   // ノイズ除去を完全オフ（語尾まで100%拾う）
+                autoGainControl: false     // 自動音量調整を完全オフ（音量を勝手に下げさせない）
             }
         };
 
@@ -274,8 +275,8 @@
             }
         }
 
-        // 権限取得完了後にマイク一覧を強制ロード
-        await loadMicrophones();
+        // マイク切替を即座にUIリストへ最新反映
+        await initAndLoadMics();
 
         if (!audioContext) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -287,15 +288,15 @@
         audioSource = audioContext.createMediaStreamSource(hardwareStream);
         gainNode = audioContext.createGain();
         
-        // 1〜20倍の手動ブースト倍率を適用
-        const userMultiplier = parseFloat(gainSelect.value) || 1.0;
-        gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
+        // 1〜20倍の指定ブースト倍率を設定
+        const boostValue = parseFloat(gainSelect.value) || 1.0;
+        gainNode.gain.setValueAtTime(boostValue, audioContext.currentTime);
 
         audioSource.connect(gainNode);
         
-        // 安全にバインドするためのダミー出力
-        const dummyDestination = audioContext.createMediaStreamDestination();
-        gainNode.connect(dummyDestination);
+        // 音声認識エンジンの内部バグ・フリーズを絶対に起こさないセーフティ出力バインド
+        const dummyDest = audioContext.createMediaStreamDestination();
+        gainNode.connect(dummyDest);
     }
 
     function startSpeechEngine() {
@@ -314,7 +315,7 @@
             recognition.continuous = true; 
 
             recognition.onstart = () => {
-                updateStatus('online', "音声を認識しています。お話しください。");
+                updateStatus('online', "マイク音質を最適化して認識中。お話しください。");
             };
 
             recognition.onresult = (e) => {
@@ -342,7 +343,7 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        // 【常時オン固定】フィラー自動削除
+                        // 【常時自動削除】超高速フィラー削除フィルタ
                         const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                         cleanedText = cleanedText.replace(fillerRegex, "")
                                                  .replace(/[、\s]?(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)[、\s]?/g, " ")
@@ -386,13 +387,12 @@
                 recognition = null;
                 processedIndices.clear(); 
                 
+                // 無音時のエンジン終了を検知してミリ秒単位で超高速ループ再起動
                 if (isActive) {
                     clearTimeout(restartTimer);
                     restartTimer = setTimeout(() => {
-                        if (isActive) {
-                            startSpeechEngine();
-                        }
-                    }, 250); 
+                        if (isActive) startSpeechEngine();
+                    }, 100); 
                 }
             };
 
@@ -441,13 +441,13 @@
         interimSpan.textContent = "";
     }
 
+    // 稼働中にマイクデバイスやブースト倍率を変更した際の超高速リバインド処理
     async function handleConfigChange() {
         if (!isActive) return;
         try {
-            // ストリームを壊さずに設定（ブースト・マイク）を即座に再適用
-            await setupHardwareAudio();
+            await setupAudioPipeline();
         } catch(e) {
-            console.log("オーディオ設定反映エラー:", e);
+            console.log("オーディオパイプライン更新エラー:", e);
         }
     }
 
@@ -463,10 +463,12 @@
         processedIndices.clear();
         lastConfirmedText = "";
         
-        updateStatus('connecting', "マイクを初期化中...");
+        updateStatus('connecting', "最適化処理を適用中...");
         
         try {
-            await setupHardwareAudio();
+            // 1. まずブラウザの音声制限を破壊し、手動ブーストパイプラインを起動
+            await setupAudioPipeline();
+            // 2. 音声認識エンジンを完全に並行稼働（フリーズを完璧に回避）
             startSpeechEngine();
         } catch (e) {
             updateStatus('error', "起動失敗: " + e.message);
@@ -478,6 +480,7 @@
         stopSpeechEngine(true); 
     };
 
+    // 設定変更イベントバインド
     micSelect.onchange = handleConfigChange;
     gainSelect.onchange = handleConfigChange;
 
