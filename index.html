@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（完全修正版）</title>
+    <title>逐語録（音質加工完全無効・高精度版）</title>
     <style>
         :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
         
@@ -108,13 +108,6 @@
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
 
-        .switch { position: relative; display: inline-block; width: 34px; height: 20px; }
-        .switch input { opacity: 0; width: 0; height: 0; }
-        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
-        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
-        input:checked + .slider { background-color: var(--primary); }
-        input:checked + .slider:before { transform: translateX(14px); }
-
         @media (max-width: 480px) {
             body { padding: 5px; }
             .card { padding: 15px; border-radius: 0; }
@@ -144,13 +137,6 @@
             <span>感度調整（ブースト）</span>
             <select id="gain-select"></select>
         </div>
-        <div class="setting-item">
-            <span>ノイズ軽減（自動最適化）</span>
-            <label class="switch">
-                <input type="checkbox" id="noise-toggle" checked>
-                <span class="slider"></span>
-            </label>
-        </div>
     </div>
 
     <div class="controls">
@@ -168,7 +154,6 @@
 <script>
     const micSelect = document.getElementById('mic-select');
     const gainSelect = document.getElementById('gain-select');
-    const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -226,7 +211,7 @@
         }
     }
 
-    // デバイス一覧の完全安全な取得
+    // デバイス一覧を安全に取得
     async function loadMicrophones() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -240,7 +225,7 @@
                 if (device.kind === 'audioinput') {
                     const opt = document.createElement('option');
                     opt.value = device.deviceId;
-                    opt.innerText = device.label || `外部マイク / 入力デバイス ${count++}`;
+                    opt.innerText = device.label || `マイク ${count++}`;
                     if (device.deviceId === currentSelection) {
                         opt.selected = true;
                     }
@@ -248,14 +233,14 @@
                 }
             });
         } catch (e) {
-            console.log("マイク一覧取得失敗:", e);
+            console.log("マイク一覧取得スキップ:", e);
         }
     }
 
-    // 初回デバイス読み込み
+    // 初回デバイス取得（Android対策でバックグラウンド実行）
     navigator.mediaDevices.enumerateDevices().then(loadMicrophones).catch(()=>{});
 
-    // ハードウェア（マイク・ブースト）の独立した設定
+    // 【最重要】認識率低下の元凶であるブラウザの音質加工を「完全無効化」するマイク制御
     async function setupHardwareAudio() {
         if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
         if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
@@ -264,11 +249,12 @@
             hardwareStream = null;
         }
 
+        // ブラウザ側のお節介な「声の間引き」をすべて強制的に「false」にして、生の音を拾う設定
         const constraints = {
             audio: {
-                echoCancellation: noiseToggle.checked,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: false // 手動ブーストを生かすためオフ
+                echoCancellation: false,  // エコーキャンセルを完全オフ（声を消させない）
+                noiseSuppression: false,  // ノイズサプレッサーを完全オフ（語尾を消させない）
+                autoGainControl: false    // 自動音量調整を完全オフ（勝手に音量を下げさせない）
             }
         };
 
@@ -288,7 +274,7 @@
             }
         }
 
-        // マイク権限取得後にリストをリフレッシュ（Android対策）
+        // 権限取得完了後にマイク一覧を強制ロード
         await loadMicrophones();
 
         if (!audioContext) {
@@ -301,14 +287,13 @@
         audioSource = audioContext.createMediaStreamSource(hardwareStream);
         gainNode = audioContext.createGain();
         
-        // 1〜20倍の音量増幅を適用
+        // 1〜20倍の手動ブースト倍率を適用
         const userMultiplier = parseFloat(gainSelect.value) || 1.0;
         gainNode.gain.setValueAtTime(userMultiplier, audioContext.currentTime);
 
         audioSource.connect(gainNode);
         
-        // 重要：フリーズを防ぐため、加工したストリームをスピーカーや認識に無理に流し込まず
-        // ルートのセキュリティ競合を完全に回避する処理に留める
+        // 安全にバインドするためのダミー出力
         const dummyDestination = audioContext.createMediaStreamDestination();
         gainNode.connect(dummyDestination);
     }
@@ -357,7 +342,7 @@
                         let cleanedText = transcript.trim();
                         if (cleanedText === "") continue;
 
-                        // 【常時オン固定】フィラー自動削除ロジック
+                        // 【常時オン固定】フィラー自動削除
                         const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
                         cleanedText = cleanedText.replace(fillerRegex, "")
                                                  .replace(/[、\s]?(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)[、\s]?/g, " ")
@@ -456,13 +441,13 @@
         interimSpan.textContent = "";
     }
 
-    // 設定変更時のリアルタイム反映（音声認識ストリームを壊さずにマイク側だけを再バインドする）
     async function handleConfigChange() {
         if (!isActive) return;
         try {
+            // ストリームを壊さずに設定（ブースト・マイク）を即座に再適用
             await setupHardwareAudio();
         } catch(e) {
-            console.log("オーディオ設定変更エラー:", e);
+            console.log("オーディオ設定反映エラー:", e);
         }
     }
 
@@ -478,15 +463,13 @@
         processedIndices.clear();
         lastConfirmedText = "";
         
-        updateStatus('connecting', "システムを接続中...");
+        updateStatus('connecting', "マイクを初期化中...");
         
         try {
-            // 先に音声パイプラインを確立し、デバイスを確定させる
             await setupHardwareAudio();
-            // その後、絶対に競合しない形で認識エンジンを回す
             startSpeechEngine();
         } catch (e) {
-            updateStatus('error', "起動に失敗しました: " + e.message);
+            updateStatus('error', "起動失敗: " + e.message);
             stopSpeechEngine(true);
         }
     };
@@ -495,10 +478,8 @@
         stopSpeechEngine(true); 
     };
 
-    // ドロップダウン変更時のイベント割当
     micSelect.onchange = handleConfigChange;
     gainSelect.onchange = handleConfigChange;
-    noiseToggle.onchange = handleConfigChange;
 
     copyBtn.onclick = async () => {
         const text = finalSpan.textContent;
