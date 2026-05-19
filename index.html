@@ -3,18 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>逐語録（マルチデバイス・Chrome完全対応版）</title>
+    <title>逐語録（マルチデバイス安定動作版）</title>
     <style>
-        :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --warning: #ffc107; --secondary: #6c757d; --info: #17a2b8; }
+        :root { --primary: #007bff; --danger: #dc3545; --success: #28a745; --secondary: #6c757d; --info: #17a2b8; }
         body { font-family: 'Helvetica Neue', Arial, sans-serif; padding: 20px; background: #f4f7f9; max-width: 800px; margin: auto; color: #333; }
         .card { background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
         h2 { margin: 0 0 15px; font-size: 1.2em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        .conn-status { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 15px; font-weight: bold; font-size: 0.9em; }
-        .indicator { width: 12px; height: 12px; border-radius: 50%; background: #ccc; }
-        .online { background: var(--success); box-shadow: 0 0 8px var(--success); }
-        .connecting { background: var(--warning); animation: blink 1s infinite; }
-        .error { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
-        @keyframes blink { 50% { opacity: 0.5; } }
+        .status-area { font-size: 0.9em; text-align: center; margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; color: #856404; font-weight: bold; }
         select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 15px; font-size: 16px; background: #fff; cursor: pointer; }
         .setting-box { background: #f8f9fa; padding: 15px; border-radius: 10px; margin-bottom: 15px; border: 1px solid #eee; }
         .setting-label { display: flex; justify-content: space-between; font-size: 0.85em; font-weight: bold; color: #555; align-items: center; }
@@ -26,7 +21,6 @@
         #save { background: var(--success); }
         #clear { background: var(--secondary); }
         button:disabled { background: #ccc !important; cursor: not-allowed; opacity: 0.6; }
-        .status-area { font-size: 0.85em; text-align: center; margin-bottom: 15px; padding: 8px; background: #fff3cd; border-radius: 6px; color: #856404; min-height: 1.2em; word-break: break-all; }
         #output-box { width: 100%; height: 500px; padding: 20px; border-radius: 12px; border: 1px solid #eef; background: #fdfdfd; overflow-y: auto; line-height: 1.8; font-size: 16px; box-sizing: border-box; }
         #final-span { color: #222; white-space: pre-wrap; }
         #interim-span { color: #999; font-style: italic; }
@@ -42,30 +36,14 @@
 <body>
 
 <div class="card">
-    <h2>逐語録（マルチデバイス・Chrome完全対応版）</h2>
-    <div class="conn-status">
-        <div id="indicator" class="indicator"></div>
-        <span id="conn-text">音声認識：待機中</span>
-    </div>
+    <h2>逐語録（マルチデバイス安定動作版）</h2>
+    <div class="status-area" id="status-display">停止中</div>
+    
     <select id="mic-select">
-        <option value="">-- マイク・ミキサーを選択（変更時に自動切替） --</option>
+        <option value="">-- デフォルト（OS既定のマイク・ミキサー） --</option>
     </select>
+
     <div class="setting-box">
-        <div class="setting-label" style="margin-bottom: 12px;">
-            <span>感度調整（倍率）</span>
-            <select id="gain-select" style="width: auto; margin-bottom: 0; padding: 5px 10px; font-size: 14px;">
-                <option value="1">1 (標準)</option>
-                <option value="2" selected>2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-                <option value="6">6</option>
-                <option value="7">7</option>
-                <option value="8">8</option>
-                <option value="9">9</option>
-                <option value="10">10 (最大)</option>
-            </select>
-        </div>
         <div class="setting-label" style="margin-bottom: 12px;">
             <span>フィラー削除（えー、あの等）</span>
             <label class="switch">
@@ -74,13 +52,14 @@
             </label>
         </div>
         <div class="setting-label">
-            <span>ノイズ軽減（ネイティブ自動最適化）</span>
+            <span>ノイズ軽減（自動最適化）</span>
             <label class="switch">
                 <input type="checkbox" id="noise-toggle" checked>
                 <span class="slider"></span>
             </label>
         </div>
     </div>
+
     <div class="controls">
         <button id="start">認識開始</button>
         <button id="stop" disabled>停止</button>
@@ -88,13 +67,12 @@
         <button id="save">保存</button>
         <button id="clear">クリア</button>
     </div>
-    <div class="status-area" id="status-display">「認識開始」を押してください。</div>
+
     <div id="output-box"><span id="final-span"></span><span id="interim-span"></span></div>
 </div>
 
 <script>
     const micSelect = document.getElementById('mic-select');
-    const gainSelect = document.getElementById('gain-select');
     const fillerToggle = document.getElementById('filler-toggle');
     const noiseToggle = document.getElementById('noise-toggle');
     const startBtn = document.getElementById('start');
@@ -106,308 +84,194 @@
     const interimSpan = document.getElementById('interim-span');
     const outputBox = document.getElementById('output-box');
     const statusDisp = document.getElementById('status-display');
-    const indicator = document.getElementById('indicator');
-    const connText = document.getElementById('conn-text');
 
     let recognition = null;
     let isActive = false;
-    let restartTimer = null;
-    let configTimeout = null;
-    
-    // Web Audio API パイプライン用
-    let audioContext = null;
-    let audioSource = null;
-    let gainNode = null;
-    let hardwareStream = null;
-    let mediaStreamDestination = null;
+    let restartTimeoutId = null;
 
-    function updateStatus(type, msg) {
-        statusDisp.innerText = msg;
-        indicator.className = "indicator " + type;
-        if(type === 'online') { 
-            connText.innerText = "音声認識：マイクON（お話しください）"; 
-            statusDisp.style.background = "#d4edda"; 
-            statusDisp.style.color = "#155724";
-        } else if(type === 'error') { 
-            connText.innerText = "音声認識：エラー停止"; 
-            statusDisp.style.background = "#f8d7da"; 
-            statusDisp.style.color = "#721c24";
-        } else if(type === 'connecting') {
-            connText.innerText = "音声認識 : 接続処理中..."; 
-            statusDisp.style.background = "#fff3cd"; 
-            statusDisp.style.color = "#856404";
-        } else { 
-            connText.innerText = "音声認識：停止中"; 
-            statusDisp.style.background = "#f8f9fa"; 
-            statusDisp.style.color = "#333";
-        }
+    function updateStatus(text, bg = '#fff3cd', color = '#856404') {
+        statusDisp.innerText = text;
+        statusDisp.style.background = bg;
+        statusDisp.style.color = color;
     }
 
-    // デバイス一覧を取得
+    // 利用可能なマイク・オーディオデバイスを安全にスキャンしてプルダウンに追加
     async function refreshDevices() {
         try {
             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioInputs = devices.filter(d => d.kind === 'audioinput');
             const currentVal = micSelect.value;
-            micSelect.innerHTML = '<option value="">-- デフォルト（OS既定のデバイス） --</option>';
             
+            micSelect.innerHTML = '<option value="">-- デフォルト（OS既定のマイク・ミキサー） --</option>';
             audioInputs.forEach((d, i) => {
                 if (d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications') {
                     const opt = document.createElement('option');
-                    opt.value = d.deviceId; 
+                    opt.value = d.deviceId;
                     opt.text = d.label || `マイク/ミキサー 入力 ${i + 1}`;
                     micSelect.appendChild(opt);
                 }
             });
-            if(currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
+            if (currentVal && Array.from(micSelect.options).some(o => o.value === currentVal)) {
                 micSelect.value = currentVal;
             }
         } catch (e) {
-            console.error(e);
+            console.error("デバイス一覧取得失敗:", e);
         }
     }
 
-    // 【最重要】選んだマイク・ミキサーの音を、ブラウザの音声認識が100%拾える安全なストリームに変換して結合する
-    async function setupAudioPipeline() {
-        // 古いパイプラインを物理的に完全解体・クリーンアップ
-        if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
-        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-        if (mediaStreamDestination) { mediaStreamDestination = null; }
-        if (hardwareStream) {
-            hardwareStream.getTracks().forEach(t => t.stop());
-            hardwareStream = null;
-        }
-
-        const constraints = {
-            audio: {
-                echoCancellation: noiseToggle.checked,
-                noiseSuppression: noiseToggle.checked,
-                autoGainControl: false
-            }
-        };
-
-        // 画面で特定のデバイス（ミキサー等）が選択されている場合、そのデバイスを強制指定して取得
-        if (micSelect && micSelect.value) {
-            constraints.audio.deviceId = { exact: micSelect.value };
-        }
-
-        // 選択されたハードウェア（マイク・ミキサー）から音を掴む
-        hardwareStream = await navigator.mediaDevices.getUserMedia(constraints);
-        await refreshDevices();
-
-        // Web Audio API 空間を立ち上げる（スピーカーには絶対繋がず、ハウリングとミュートを完全回避）
-        if (!audioContext) {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        if (audioContext.state === 'suspended') {
-            await audioContext.resume();
-        }
-
-        audioSource = audioContext.createMediaStreamSource(hardwareStream);
-        gainNode = audioContext.createGain();
-        
-        // 画面の「感度調整（倍率）」をデジタル処理で正確に上乗せ
-        const gainMultiplier = parseFloat(gainSelect.value) || 1.0;
-        gainNode.gain.setValueAtTime(gainMultiplier, audioContext.currentTime);
-
-        audioSource.connect(gainNode);
-        
-        // 【Chromeバグ完全攻略】
-        // 加工（増幅）された音声ストリームを、音声認識専用の仮想終着点へ接続
-        mediaStreamDestination = audioContext.createMediaStreamDestination();
-        gainNode.connect(mediaStreamDestination);
-
-        // この処理を通したストリーム（音声認識が確実に拒絶せず拾う音）を返す
-        return mediaStreamDestination.stream;
-    }
-
-    // 音声認識エンジンの起動および自動ループ
-    function startSpeechEngine(processedStream) {
-        if (!isActive) return;
-
+    // 音声認識オブジェクトの初期化（純粋なブラウザ標準機能）
+    function initRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            updateStatus('error', "エラー: お使いのブラウザは音声認識非対応です。Chromeをご利用ください。");
+            updateStatus('エラー: お使いのブラウザは音声認識非対応です。', '#f8d7da', '#721c24');
             return;
         }
 
-        try {
-            recognition = new SpeechRecognition();
-            recognition.lang = 'ja-JP';
-            recognition.interimResults = true;
-            recognition.continuous = true; 
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ja-JP';
+        recognition.interimResults = true;
+        recognition.continuous = true;
 
-            // Chrome/EdgeがOS既定デバイスのみに固定されるのを防ぐため、加工済みストリームを深層プロパティへ完全バインド
-            if (processedStream && processedStream.getAudioTracks().length > 0) {
-                const track = processedStream.getAudioTracks()[0];
-                if (recognition.audioTrack !== undefined) {
-                    recognition.audioTrack = track;
-                }
-                // Chrome系の深層仕様に対する完全フォールバック注入
-                try {
-                    recognition.stream = processedStream;
-                } catch(e) {}
+        recognition.onstart = () => {
+            if (!isActive) {
+                if (recognition) try { recognition.abort(); } catch(e){}
+                return;
             }
+            updateStatus('音声認識中...', '#d4edda', '#155724');
+        };
 
-            recognition.onstart = () => {
-                if (!isActive) { 
-                    stopSpeechEngine();
-                    return;
-                }
-                updateStatus('online', "認識中：選択されたデバイスの音声を正常にキャッチしています。");
-            };
+        recognition.onresult = (e) => {
+            if (!isActive) return;
+            let interimText = '';
 
-            recognition.onresult = (e) => {
-                if (!isActive) return;
-                let interimText = '';
+            for (let i = e.resultIndex; i < e.results.length; i++) {
+                let transcript = e.results[i][0].transcript;
+                if (!transcript) continue;
 
-                for (let i = e.resultIndex; i < e.results.length; i++) {
-                    let transcript = e.results[i][0].transcript;
-                    if (!transcript) continue;
+                if (e.results[i].isFinal) {
+                    let cleanedText = transcript.trim();
 
-                    if (e.results[i].isFinal) {
-                        let cleanedText = transcript.trim();
-
-                        // フィラー除去処理
-                        if (fillerToggle.checked) {
-                            const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
-                            cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
-                        }
-                        
-                        if (cleanedText === "") continue;
-
-                        const currentFinal = finalSpan.textContent.trim();
-                        let separator = currentFinal !== "" ? "。\n" : "";
-                        if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
-                        if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
-
-                        finalSpan.textContent += separator + cleanedText;
-                    } else {
-                        interimText += transcript;
+                    // フィラー削除処理
+                    if (fillerToggle.checked) {
+                        const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん)/g;
+                        cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの)[、\s]?/g, " ").trim();
                     }
-                }
 
-                interimSpan.textContent = interimText;
-                outputBox.scrollTop = outputBox.scrollHeight;
-            };
+                    if (cleanedText === "") continue;
 
-            // 無音自動切断時の安全な再起動
-            recognition.onend = () => {
-                if (recognition) {
-                    try { recognition.abort(); } catch(e){}
-                    recognition = null;
-                }
-                if (isActive) {
-                    clearTimeout(restartTimer);
-                    restartTimer = setTimeout(async () => {
-                        if (isActive) {
-                            try {
-                                const stream = await setupAudioPipeline();
-                                startSpeechEngine(stream);
-                            } catch(e) {
-                                console.error("再初期化失敗:", e);
-                            }
-                        }
-                    }, 300); 
-                }
-            };
+                    const currentFinal = finalSpan.textContent.trim();
+                    let separator = currentFinal !== "" ? "。\n" : "";
+                    if (/[。？！?!]$/.test(currentFinal)) separator = "\n";
+                    if (!/[。？！?!]$/.test(cleanedText)) cleanedText += "。";
 
-            recognition.onerror = (ev) => {
-                console.log("SpeechRecognition error:", ev.error);
-                if (ev.error === 'no-speech' || ev.error === 'audio-capture') {
-                    try { recognition.stop(); } catch(e){}
-                } else if (ev.error === 'not-allowed') {
-                    updateStatus('error', "エラー: マイクの使用権限がありません。");
-                    stopSpeechEngine();
+                    finalSpan.textContent += separator + cleanedText;
                 } else {
-                    try { recognition.abort(); } catch(e){}
-                }
-            };
-
-            recognition.start();
-
-        } catch(e) {
-            console.error(e);
-            updateStatus('error', "エンジンの起動に失敗しました。「認識開始」を再度押してください。");
-        }
-    }
-
-    // すべての非同期ループ、タイマー、ハードウェアを完全消去してピタッと止める関数
-    function stopSpeechEngine() {
-        isActive = false; 
-        clearTimeout(restartTimer);
-        clearTimeout(configTimeout);
-        
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
-        updateStatus('', "停止しました。");
-        
-        if (recognition) {
-            try {
-                recognition.onend = null; // 再起動イベントを完全に引き剥がしてゾンビ化防止
-                recognition.abort(); 
-            } catch(e){}
-            recognition = null;
-        }
-
-        // ハードウェアと仮想オーディオラインを完全切断（マイクの光も確実に消えます）
-        if (audioSource) { try { audioSource.disconnect(); } catch(e){} audioSource = null; }
-        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-        if (hardwareStream) {
-            hardwareStream.getTracks().forEach(track => track.stop());
-            hardwareStream = null;
-        }
-        if (audioContext && audioContext.state !== 'closed') {
-            try { audioContext.suspend(); } catch(e){}
-        }
-        
-        interimSpan.textContent = "";
-    }
-
-    // 各種プルダウンやトグルが切り替わったときのリアルタイム追従処理
-    function handleConfigChange() {
-        if (!isActive) return; 
-        
-        clearTimeout(configTimeout);
-        configTimeout = setTimeout(async () => {
-            if (isActive) {
-                try {
-                    updateStatus('connecting', "設定・マイクを完全に切り替え中...");
-                    const stream = await setupAudioPipeline();
-                    startSpeechEngine(stream);
-                } catch(e) {
-                    updateStatus('error', "切り替え失敗: " + e.message);
+                    interimText += transcript;
                 }
             }
-        }, 400); 
+
+            interimSpan.textContent = interimText;
+            outputBox.scrollTop = outputBox.scrollHeight;
+        };
+
+        recognition.onend = () => {
+            // 停止ボタンが押されていない場合（isActiveがtrue）のみ安全に再起動する
+            if (isActive) {
+                clearTimeout(restartTimeoutId);
+                restartTimeoutId = setTimeout(() => {
+                    if (isActive && recognition) {
+                        try { recognition.start(); } catch (e) { console.error(e); }
+                    }
+                }, 300);
+            }
+        };
+
+        recognition.onerror = (ev) => {
+            console.warn("SpeechRecognition error:", ev.error);
+            if (ev.error === 'not-allowed') {
+                updateStatus('マイクの使用が許可されていません。', '#f8d7da', '#721c24');
+                isActive = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        };
     }
 
+    // 認識開始
     startBtn.onclick = async () => {
-        stopSpeechEngine(); // 二重起動による文字重複を絶対に防ぐ安全弁
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        updateStatus('connecting', "オーディオ機器を構築中...");
-        
-        try {
-            const stream = await setupAudioPipeline();
-            startSpeechEngine(stream);
-        } catch (e) {
-            updateStatus('error', "起動失敗: " + e.message);
-            stopSpeechEngine();
+        updateStatus('起動中...', '#fff3cd', '#856404');
+
+        // 音声認識を毎回クリーンに新規作成
+        if (recognition) {
+            try { recognition.onend = null; recognition.abort(); } catch(e){}
+        }
+        initRecognition();
+
+        // プルダウンメニューで特定のデバイスが選択されている場合は、認識の制約としてブラウザに直接命令する
+        if (micSelect.value && recognition) {
+            // 選択されたデバイスのストリームを一度掴むことでブラウザに選択入力を強制同期させる
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { 
+                        deviceId: { exact: micSelect.value },
+                        echoCancellation: noiseToggle.checked,
+                        noiseSuppression: noiseToggle.checked
+                    }
+                });
+                // 一瞬だけ掴んでから、認識エンジン側へバインド（有効化）させる
+                if (recognition.audioTrack !== undefined) {
+                    recognition.audioTrack = stream.getAudioTracks()[0];
+                }
+            } catch (err) {
+                console.error("デバイスの強制指定に失敗しました。既定で起動します:", err);
+            }
+        }
+
+        if (recognition) {
+            try {
+                recognition.start();
+            } catch (e) {
+                console.error(e);
+                updateStatus('起動に失敗しました。再読み込みしてください。', '#f8d7da', '#721c24');
+                isActive = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
         }
     };
 
+    // 完全にピタッと止める停止処理
     stopBtn.onclick = () => {
-        stopSpeechEngine(); 
+        isActive = false;
+        clearTimeout(restartTimeoutId);
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        
+        if (recognition) {
+            try {
+                recognition.onend = null; // 再起動イベントを完全に破壊してゾンビ化を遮断
+                recognition.stop();
+            } catch(e){}
+        }
+        updateStatus('停止しました', '#e2e3e5', '#383d41');
+        interimSpan.textContent = "";
     };
 
-    // イベントの即時バインド
-    micSelect.onchange = handleConfigChange;
-    gainSelect.onchange = handleConfigChange; 
-    noiseToggle.onchange = handleConfigChange;
-    fillerToggle.onchange = handleConfigChange;
+    // プルダウンなどの設定変更時：動いている場合は一度安全に落として再起動
+    micSelect.onchange = () => {
+        if (isActive) {
+            startBtn.click();
+        }
+    };
+    noiseToggle.onchange = () => {
+        if (isActive) {
+            startBtn.click();
+        }
+    };
 
     copyBtn.onclick = async () => {
         const text = finalSpan.textContent;
@@ -418,7 +282,7 @@
             copyBtn.innerText = "コピー完了！";
             setTimeout(() => copyBtn.innerText = originalText, 2000);
         } catch (err) {
-            alert("長押ししてコピーしてください：\n\n" + text);
+            alert("長押しして手動コピーしてください：\n\n" + text);
         }
     };
 
@@ -439,22 +303,22 @@
     };
 
     clearBtn.onclick = () => {
-        if (confirm("テキストをすべて消去しますか？")) {
-            finalSpan.textContent = ""; 
+        if (confirm("表示されているテキストを消去しますか？")) {
+            finalSpan.textContent = "";
             interimSpan.textContent = "";
         }
     };
 
-    // 初回起動時にマイク許可を一瞬だけ取り、リストを正確に作成してすぐ解放
+    // 起動時にマイクの権限を一度取得し、利用可能なデバイスのリストを綺麗にスキャンする
     window.onload = async () => {
         try {
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
                 const initStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 await refreshDevices();
-                initStream.getTracks().forEach(t => t.stop()); 
+                initStream.getTracks().forEach(t => t.stop()); // リスト作成後、速やかに解放して競合を防ぐ
             }
-        } catch(e){
-            updateStatus('', "「認識開始」を押してマイクを有効にしてください。");
+        } catch(e) {
+            updateStatus('マイクを有効にしてください。');
         }
     };
 </script>
