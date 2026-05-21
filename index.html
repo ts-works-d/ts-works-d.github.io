@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>逐語録システム（完全全画面版）</title>
+    <title>逐語録システム（自動キャリブレーション版）</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         
-        /* 画面全体のスクロールを完全に禁止し、100%フィットさせる */
         html, body {
             width: 100%;
             height: 100%;
@@ -17,7 +16,6 @@
             -webkit-text-size-adjust: 100%;
         }
 
-        /* 画面に100%追従するメインコンテナ */
         .app-container {
             width: 100%;
             height: 100%;
@@ -25,10 +23,9 @@
             margin: 0 auto;
             padding: 10px;
             display: flex;
-            flex-direction: column; /* 縦並び */
+            flex-direction: column;
         }
 
-        /* 外枠カード（中身をFlexboxで制御） */
         .main-card {
             width: 100%;
             height: 100%;
@@ -38,7 +35,7 @@
             box-shadow: 0 4px 20px rgba(0,0,0,0.06);
             display: flex;
             flex-direction: column;
-            min-height: 0; /* 子要素のあふれ防止 */
+            min-height: 0;
         }
 
         h2 {
@@ -48,10 +45,9 @@
             padding-bottom: 6px;
             margin-bottom: 6px;
             border-bottom: 1px solid #dee2e6;
-            flex-shrink: 0; /* 絶対に縮まない */
+            flex-shrink: 0;
         }
 
-        /* ステータスエリア */
         .status-bar {
             width: 100%;
             padding: 8px;
@@ -62,13 +58,12 @@
             background-color: #fff3cd;
             color: #856404;
             margin-bottom: 6px;
-            flex-shrink: 0; /* 絶対に縮まない */
+            flex-shrink: 0;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
 
-        /* 設定項目エリア（グリッドで綺麗に並べる） */
         .config-box {
             width: 100%;
             background: #f8f9fa;
@@ -78,7 +73,7 @@
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 6px;
-            flex-shrink: 0; /* 絶対に縮まない */
+            flex-shrink: 0;
         }
         .config-item {
             display: flex;
@@ -104,20 +99,20 @@
             height: 34px;
         }
 
-        /* 操作ボタンエリア */
+        /* 操作ボタンエリア（自動設定ボタン追加に伴い6列に変更） */
         .btn-group {
             width: 100%;
             margin-bottom: 4px;
             display: grid;
-            grid-template-columns: repeat(5, 1fr); /* 5つのボタンを均等配置 */
+            grid-template-columns: 1.2fr repeat(5, 1fr); 
             gap: 4px;
-            flex-shrink: 0; /* 絶対に縮まない */
+            flex-shrink: 0;
         }
         
         button {
             width: 100%;
             height: 40px;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
             color: #ffffff;
             border: none;
@@ -129,6 +124,7 @@
         button:active { opacity: 0.7; }
         button:disabled { background-color: #ced4da !important; color: #6c757d !important; opacity: 0.5; cursor: not-allowed; }
         
+        #auto-config { background-color: #e83e8c; } /* 自動設定ボタン（ピンク） */
         #start { background-color: #007bff; }
         #stop { background-color: #dc3545; }
         #copy { background-color: #17a2b8; }
@@ -138,7 +134,7 @@
         .reset-box {
             width: 100%;
             margin-bottom: 8px;
-            flex-shrink: 0; /* 絶対に縮まない */
+            flex-shrink: 0;
         }
         #reset-dev {
             background-color: #343a40;
@@ -147,17 +143,16 @@
             border-radius: 6px;
         }
 
-        /* テキスト表示エリア（画面の残りの高さを100%自動で埋める） */
         .output-wrapper {
-            flex: 1; /* 残りの高さをすべてこの要素に割り当てる */
+            flex: 1;
             width: 100%;
             border: 1px solid #dee2e6;
             border-radius: 8px;
             background-color: #fafafa;
-            overflow-y: auto; /* 溢れた文字だけをスクロールさせる */
+            overflow-y: auto;
             -webkit-overflow-scrolling: touch;
             padding: 12px;
-            min-height: 0; /* Flexbox内のスクロールを正常に動作させる魔法のコード */
+            min-height: 0;
         }
 
         #output-text {
@@ -174,8 +169,8 @@
 
 <div class="app-container">
     <div class="main-card">
-        <h2>逐語録システム</h2>
-        <div class="status-bar" id="status-display">「開始」を押してマイクを許可してください</div>
+        <h2>逐語録システム（自動最適化機能付）</h2>
+        <div class="status-bar" id="status-display">「開始」または「自動設定」を押してください</div>
         
         <div class="config-box">
             <div class="config-item full">
@@ -193,6 +188,7 @@
         </div>
 
         <div class="btn-group">
+            <button id="auto-config">自動設定</button>
             <button id="start">開始</button>
             <button id="stop" disabled>停止</button>
             <button id="copy">コピー</button>
@@ -212,6 +208,7 @@
 </div>
 
 <script>
+    const autoBtn = document.getElementById('auto-config');
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
@@ -228,11 +225,14 @@
 
     let recognition = null;
     let isActive = false;
+    let isCalibrating = false;
     let restartTimeoutId = null;
     let wakeLock = null;
     let confirmedHistory = [];
+    
+    // キャリブレーション用変数
+    let noiseCount = 0;
 
-    // リスト初期化 (1〜50 に拡張、初期値：感度20 / ブースト30)
     for(let i=1; i<=50; i++){
         const optS = document.createElement('option'); optS.value = i; optS.innerText = i; if(i===20) optS.selected = true;
         sensitivitySelect.appendChild(optS);
@@ -246,6 +246,8 @@
             statusDisp.style.backgroundColor = "#d4edda"; statusDisp.style.color = "#155724";
         } else if (state === 'offline') {
             statusDisp.style.backgroundColor = "#e2e3e5"; statusDisp.style.color = "#383d41";
+        } else if (state === 'calibrating') {
+            statusDisp.style.backgroundColor = "#e83e8c"; statusDisp.style.color = "#ffffff";
         } else {
             statusDisp.style.backgroundColor = "#fff3cd"; statusDisp.style.color = "#856404";
         }
@@ -299,8 +301,10 @@
         recognition.continuous = true; 
 
         recognition.onstart = () => {
-            updateStatus('online', "サーバー接続中：お話しください");
-            requestWakeLock();
+            if (!isCalibrating) {
+                updateStatus('online', "サーバー接続中：お話しください");
+                requestWakeLock();
+            }
         };
 
         recognition.onresult = (e) => {
@@ -308,20 +312,24 @@
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let transcript = e.results[i][0].transcript;
                 
-                // 1〜50の感度設定に応じた文字数・ノイズ判定の最適化フィルター
-                // 感度が低い（数値が小さい）ほど、短い不鮮明な音（1〜3文字）を強力にカットします。初期値20付近でバランスを調整。
+                // 自動設定（測定モード）中の処理
+                if (isCalibrating) {
+                    if (e.results[i].isFinal) {
+                        noiseCount += transcript.trim().length; // 雑音として拾ってしまった文字数をカウント
+                    }
+                    continue;
+                }
+
                 const minLengthFilter = Math.max(0, Math.floor((25 - parseInt(sensitivitySelect.value)) / 5));
                 
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
                     if (cleanedText.length < minLengthFilter) continue;
 
-                    // フィラー除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん|えっと)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの|えっと)[、\s]?/g, " ").trim();
                     if (cleanedText === "") continue;
 
-                    // 多重表示徹底防御フィルター
                     let isDuplicate = false;
                     const checkLength = Math.min(cleanedText.length, 6);
                     const incomingChunk = cleanedText.substring(0, checkLength);
@@ -336,7 +344,6 @@
                     confirmedHistory.push(cleanedText);
                     if (confirmedHistory.length > 10) confirmedHistory.shift();
 
-                    // 記号・改行の重複防止挿入
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = "";
                     if (currentFinal !== "") {
@@ -351,12 +358,14 @@
                     interimText += transcript;
                 }
             }
-            interimSpan.innerText = interimText;
-            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            if (!isCalibrating) {
+                interimSpan.innerText = interimText;
+                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+            }
         };
 
         recognition.onend = () => {
-            if (isActive) {
+            if (isActive && !isCalibrating) {
                 clearTimeout(restartTimeoutId);
                 restartTimeoutId = setTimeout(() => {
                     if (isActive) {
@@ -371,16 +380,95 @@
             if (ev.error === 'not-allowed') {
                 updateStatus('offline', "マイク権限を許可してください");
                 isActive = false;
+                isCalibrating = false;
                 startBtn.disabled = false;
+                autoBtn.disabled = false;
                 stopBtn.disabled = true;
                 deviceSelect.disabled = false;
             }
         };
     }
 
+    // 環境雑音の自動測定（キャリブレーション）ロジック
+    autoBtn.onclick = async () => {
+        isCalibrating = true;
+        isActive = true;
+        autoBtn.disabled = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = true;
+        deviceSelect.disabled = true;
+        noiseCount = 0;
+
+        try {
+            const constraints = { audio: true };
+            if (deviceSelect.value) { constraints.audio = { deviceId: { exact: deviceSelect.value } }; }
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            await initDevices();
+            stream.getTracks().forEach(track => track.stop());
+        } catch (err) {
+            updateStatus('offline', "マイクの起動に失敗しました");
+            autoBtn.disabled = false;
+            startBtn.disabled = false;
+            deviceSelect.disabled = false;
+            isCalibrating = false;
+            isActive = false;
+            return;
+        }
+
+        initRecognition();
+        try { recognition.start(); } catch(e){}
+
+        // 3秒間のカウントダウン測定
+        let timeLeft = 3;
+        updateStatus('calibrating', `環境音を測定中... 残り ${timeLeft} 秒 (黙ってください)`);
+        
+        const timer = setInterval(() => {
+            timeLeft--;
+            if (timeLeft > 0) {
+                updateStatus('calibrating', `環境音を測定中... 残り ${timeLeft} 秒 (黙ってください)`);
+            } else {
+                clearInterval(timer);
+                
+                // 測定終了・解析
+                isCalibrating = false;
+                isActive = false;
+                if (recognition) { try { recognition.stop(); } catch(e){} }
+
+                // 雑音検知レベルに応じて感度(1-50)とブースト(1-50)の最適値を算出
+                // 雑音文字数が多い＝周りがうるさい ➔ 感度数値を下げて(フィルター強化)、ブーストを上げる
+                let calculatedSensitivity = 20;
+                let calculatedBoost = 30;
+
+                if (noiseCount > 10) { // かなりうるさい環境
+                    calculatedSensitivity = 5;
+                    calculatedBoost = 45;
+                } else if (noiseCount > 4) { // やや雑音がある環境
+                    calculatedSensitivity = 12;
+                    calculatedBoost = 38;
+                } else if (noiseCount > 0) { // 標準的な環境
+                    calculatedSensitivity = 20;
+                    calculatedBoost = 30;
+                } else { // 非常に静かな環境
+                    calculatedSensitivity = 35;
+                    calculatedBoost = 15;
+                }
+
+                // セレクトボックスに値を反映
+                sensitivitySelect.value = calculatedSensitivity;
+                boostSelect.value = calculatedBoost;
+
+                updateStatus('offline', `自動設定完了！ (感度:${calculatedSensitivity} / ブースト:${calculatedBoost}) 「開始」を押してください`);
+                autoBtn.disabled = false;
+                startBtn.disabled = false;
+                deviceSelect.disabled = false;
+            }
+        }, 1000);
+    };
+
     startBtn.onclick = async () => {
         isActive = true;
         startBtn.disabled = true;
+        autoBtn.disabled = true;
         stopBtn.disabled = false;
         deviceSelect.disabled = true;
         updateStatus('', "音声同期中...");
@@ -394,6 +482,7 @@
         } catch (err) {
             updateStatus('offline', "マイクの起動に失敗しました");
             startBtn.disabled = false;
+            autoBtn.disabled = false;
             stopBtn.disabled = true;
             deviceSelect.disabled = false;
             return;
@@ -412,6 +501,7 @@
         isActive = false;
         clearTimeout(restartTimeoutId);
         startBtn.disabled = false;
+        autoBtn.disabled = false;
         stopBtn.disabled = true;
         deviceSelect.disabled = false;
         if (recognition) { try { recognition.stop(); } catch(e){} }
