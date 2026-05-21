@@ -183,11 +183,11 @@
                 <select id="device-select"><option value="">既定のマイク（自動選択）</option></select>
             </div>
             <div class="config-item">
-                <label for="sensitivity-select">感度調整 (1-20)</label>
+                <label for="sensitivity-select">感度調整 (1-50)</label>
                 <select id="sensitivity-select"></select>
             </div>
             <div class="config-item">
-                <label for="boost-select">ブースト (1-20)</label>
+                <label for="boost-select">ブースト (1-50)</label>
                 <select id="boost-select"></select>
             </div>
         </div>
@@ -232,11 +232,11 @@
     let wakeLock = null;
     let confirmedHistory = [];
 
-    // リスト初期化
-    for(let i=1; i<=20; i++){
-        const optS = document.createElement('option'); optS.value = i; optS.innerText = i; if(i===5) optS.selected = true;
+    // リスト初期化 (1〜50 に拡張、初期値：感度20 / ブースト30)
+    for(let i=1; i<=50; i++){
+        const optS = document.createElement('option'); optS.value = i; optS.innerText = i; if(i===20) optS.selected = true;
         sensitivitySelect.appendChild(optS);
-        const optB = document.createElement('option'); optB.value = i; optB.innerText = i; if(i===5) optB.selected = true;
+        const optB = document.createElement('option'); optB.value = i; optB.innerText = i; if(i===30) optB.selected = true;
         boostSelect.appendChild(optB);
     }
 
@@ -307,7 +307,10 @@
             let interimText = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let transcript = e.results[i][0].transcript;
-                const minLengthFilter = Math.max(0, Math.floor((6 - parseInt(sensitivitySelect.value)) / 2));
+                
+                // 1〜50の感度設定に応じた文字数・ノイズ判定の最適化フィルター
+                // 感度が低い（数値が小さい）ほど、短い不鮮明な音（1〜3文字）を強力にカットします。初期値20付近でバランスを調整。
+                const minLengthFilter = Math.max(0, Math.floor((25 - parseInt(sensitivitySelect.value)) / 5));
                 
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
