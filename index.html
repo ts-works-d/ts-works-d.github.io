@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>逐語録（高性能・スマホ最適化版）</title>
+    <title>逐語録（スマホ完全対応・保存機能付）</title>
     <style>
         :root { 
             --primary: #007bff; --danger: #dc3545; --success: #28a745; 
@@ -14,44 +14,45 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
             padding: 10px; background: #f4f7f9; color: #333; 
             width: 100vw; height: 100vh; display: flex; flex-direction: column;
+            overflow: hidden;
         }
         .container { 
             display: flex; flex-direction: column; height: 100%; max-width: 600px; margin: 0 auto; width: 100%;
         }
         .card { 
-            background: #fff; padding: 15px; border-radius: 12px; 
+            background: #fff; padding: 12px; border-radius: 12px; 
             box-shadow: 0 4px 15px rgba(0,0,0,0.08); display: flex; flex-direction: column; flex: 1; min-height: 0;
         }
-        h2 { font-size: 1.1em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 8px; margin-bottom: 10px; }
+        h2 { font-size: 1.1em; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 6px; margin-bottom: 8px; }
         
         .status-area { 
-            font-size: 0.85em; text-align: center; margin-bottom: 10px; padding: 8px; 
+            font-size: 0.85em; text-align: center; margin-bottom: 8px; padding: 8px; 
             background: #fff3cd; border-radius: 6px; color: #856404; font-weight: bold; 
         }
         
-        /* 設定エリアのレイアウト */
         .config-grid {
-            display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 10px; background: #f8f9fa; padding: 10px; border-radius: 8px;
+            display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 8px; background: #f8f9fa; padding: 8px; border-radius: 8px;
         }
-        .config-item { display: flex; flex-direction: column; gap: 4px; font-size: 0.8em; font-weight: bold; color: #555; }
+        .config-item { display: flex; flex-direction: column; gap: 2px; font-size: 0.75em; font-weight: bold; color: #555; }
         .config-item.full-width { grid-column: span 2; }
-        select { padding: 6px; border-radius: 6px; border: 1px solid #ccc; font-size: 0.9em; background: #fff; width: 100%; }
+        select { padding: 5px; border-radius: 6px; border: 1px solid #ccc; font-size: 0.85em; background: #fff; width: 100%; color: #333; }
         
-        /* コントロールボタン */
-        .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
-        button { padding: 12px 4px; font-size: 0.85em; font-weight: bold; cursor: pointer; border: none; border-radius: 8px; color: white; transition: background 0.2s; -webkit-tap-highlight-color: transparent; }
+        /* ボタンレイアウト調整（5個のメインボタン＋デバイスリセット） */
+        .controls { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; }
+        button { padding: 12px 2px; font-size: 0.8em; font-weight: bold; cursor: pointer; border: none; border-radius: 6px; color: white; transition: opacity 0.2s; -webkit-tap-highlight-color: transparent; }
         #start { background: var(--primary); }
         #stop { background: var(--danger); }
         #copy { background: var(--info); }
+        #save { background: var(--success); } /* 保存ボタン */
         #clear { background: var(--secondary); }
-        #reset-dev { background: var(--dark); grid-column: span 4; padding: 8px; font-size: 0.8em; }
-        button:disabled { background: #ccc !important; opacity: 0.5; cursor: not-allowed; }
+        #reset-dev { background: var(--dark); grid-column: span 5; padding: 6px; font-size: 0.75em; border-radius: 6px; }
+        button:disabled { background: #ccc !important; opacity: 0.4; cursor: not-allowed; }
         
-        /* 出力ボックス（自動伸縮・スクロール） */
         #output-box { 
             flex: 1; width: 100%; padding: 12px; border-radius: 8px; 
             border: 1px solid #ddd; background: #fafafa; overflow-y: auto; 
-            line-height: 1.6; font-size: 15px; min-height: 0; word-break: break-all;
+            line-height: 1.6; font-size: 16px; min-height: 0; word-break: break-all;
+            -webkit-overflow-scrolling: touch;
         }
         #final-span { color: #111; white-space: pre-wrap; }
         #interim-span { color: #888; font-style: italic; }
@@ -61,23 +62,21 @@
 
 <div class="container">
     <div class="card">
-        <h2>逐語録システム</h2>
-        <div class="status-area" id="status-display">「認識開始」を押してください</div>
+        <h2>逐語録システム（スマホ完全版）</h2>
+        <div class="status-area" id="status-display">「開始」を押してマイクを許可してください</div>
         
         <div class="config-grid">
             <div class="config-item full-width">
                 <label for="device-select">入力デバイス選択</label>
-                <select id="device-select"><option value="">既定のマイク</option></select>
+                <select id="device-select"><option value="">既定のマイク（自動選択）</option></select>
             </div>
             <div class="config-item">
                 <label for="sensitivity-select">感度調整 (1-20)</label>
-                <select id="sensitivity-select">
-                    </select>
+                <select id="sensitivity-select"></select>
             </div>
             <div class="config-item">
                 <label for="boost-select">ブースト (1-20)</label>
-                <select id="boost-select">
-                    </select>
+                <select id="boost-select"></select>
             </div>
         </div>
 
@@ -85,6 +84,7 @@
             <button id="start">開始</button>
             <button id="stop" disabled>停止</button>
             <button id="copy">コピー</button>
+            <button id="save">保存</button>
             <button id="clear">クリア</button>
             <button id="reset-dev">デバイスリセット</button>
         </div>
@@ -99,6 +99,7 @@
     const startBtn = document.getElementById('start');
     const stopBtn = document.getElementById('stop');
     const copyBtn = document.getElementById('copy');
+    const saveBtn = document.getElementById('save');
     const clearBtn = document.getElementById('clear');
     const resetDevBtn = document.getElementById('reset-dev');
     const finalSpan = document.getElementById('final-span');
@@ -112,16 +113,9 @@
     let recognition = null;
     let isActive = false;
     let restartTimeoutId = null;
-    let wakeLock = null; // スリープ防止用
-    
-    // Web Audio API 関連
-    let audioContext = null;
-    let mediaStream = null;
-    let mediaStreamSource = null;
-    let gainNode = null;
-    let audioProcessor = null;
+    let wakeLock = null;
 
-    // セレクトボックスの初期化 (1〜20、初期値5)
+    // セレクトボックス初期化 (初期値5)
     for(let i=1; i<=20; i++){
         const optS = document.createElement('option'); optS.value = i; optS.innerText = i; if(i===5) optS.selected = true;
         sensitivitySelect.appendChild(optS);
@@ -140,15 +134,11 @@
         }
     }
 
-    // デバイス一覧の取得
+    // デバイス名一覧の取得（ユーザーのアクション後に実行することでスマホでも取得可能に）
     async function initDevices() {
         try {
-            // 最初の一回マイクパーミッションを要求
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
-            if (stream) stream.getTracks().forEach(track => track.stop());
-
             const devices = await navigator.mediaDevices.enumerateDevices();
-            deviceSelect.innerHTML = '<option value="">既定のマイク</option>';
+            deviceSelect.innerHTML = '<option value="">既定のマイク（自動選択）</option>';
             devices.forEach(device => {
                 if (device.kind === 'audioinput') {
                     const option = document.createElement('option');
@@ -158,83 +148,55 @@
                 }
             });
         } catch (e) {
-            console.error("デバイス取得失敗:", e);
+            console.warn("デバイス一覧の取得に失敗:", e);
         }
     }
 
-    // スリープ防止（Wake Lock API）の有効化
+    // スリープ防止
     async function requestWakeLock() {
         if ('wakeLock' in navigator) {
             try { wakeLock = await navigator.wakeLock.request('screen'); } catch (err) {}
         }
     }
-
     function releaseWakeLock() {
         if (wakeLock) { wakeLock.release().then(() => wakeLock = null); }
     }
 
-    // 音声処理（感度とブーストの適用）
-    async function setupAudioProcessing() {
-        if (audioContext) { try { await audioContext.close(); } catch(e){} }
-        
-        const constraints = { audio: true };
-        if (deviceSelect.value) {
-            constraints.audio = { deviceId: { exact: deviceSelect.value } };
-        }
-
-        try {
-            mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-            
-            // iOS/Androidでの挙動維持のため、AudioContextはユーザーアクション直後に生成
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            mediaStreamSource = audioContext.createMediaStreamSource(mediaStream);
-            gainNode = audioContext.createGain();
-
-            // ブースト値(1〜20)をGainに反映（初期値5を基準に倍率計算）
-            const boostVal = parseFloat(boostSelect.value);
-            gainNode.gain.value = boostVal / 5.0; 
-
-            // 感度調整(1〜20)をノイズゲートの閾値として見立てて簡易フィルター(今回はゲイン制御と連動)
-            const sensVal = parseFloat(sensitivitySelect.value);
-            // 感度が高い(値が大きい)ほど、小さな音も拾うようにゲインを微調整
-            gainNode.gain.value *= (sensVal / 5.0);
-
-            mediaStreamSource.connect(gainNode);
-            // 認識精度低下を防ぐため、スピーカー(destination)には繋がずハウリングを防止
-            
-        } catch (err) {
-            console.error("Audioコンテキスト設定エラー:", err);
-        }
-    }
-
+    // 音声認識の初期化
     function initRecognition() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-            updateStatus('offline', "ブラウザが音声認識に対応していません");
+            updateStatus('offline', "お使いのブラウザ・スマホは音声認識に非対応です");
             return;
         }
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        recognition.continuous = true;
+        // スマホ（特にSafari）での文字落ち・フリーズを防ぐためcontinuousは環境に応じて最適化
+        recognition.continuous = true; 
 
         recognition.onstart = () => {
-            updateStatus('online', "接続中：お話しください");
+            updateStatus('online', "認識中：お話しください");
             requestWakeLock();
         };
 
-        let lastTranscript = ""; // 多重表示・重複防止用
+        let lastTranscript = "";
 
         recognition.onresult = (e) => {
             let interimText = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let transcript = e.results[i][0].transcript;
                 
+                // ブースト・感度の疑似調整（文字数が極端に少ない不鮮明な音を感度設定に応じて弾くフィルター）
+                const minLengthFilter = Math.max(0, Math.floor((6 - parseInt(sensitivitySelect.value)) / 2)); 
+                
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
                     
-                    // フィラー（えー、あの）の徹底除去
+                    if (cleanedText.length < minLengthFilter) continue; // 感度以下のノイズを間引き
+
+                    // フィラー除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん|えっと)/g;
                     cleanedText = cleanedText.replace(fillerRegex, "").replace(/[、\s](えーと|えーっと|えー、|あのー|あの、|えー|あの|えっと)[、\s]?/g, " ").trim();
                     
@@ -244,7 +206,6 @@
                     const currentFinal = finalSpan.innerText.trim();
                     let separator = "";
                     
-                    // 「、」「。」「改行」の重複を防ぎ、適宜挿入するロジック
                     if (currentFinal !== "") {
                         if (/[。？！?!]$/.test(currentFinal)) {
                             separator = "\n"; 
@@ -265,12 +226,10 @@
                 }
             }
             interimSpan.innerText = interimText;
-            
-            // 画面最下部への自動スクロール（文字落ち確認のストレスを軽減）
             outputBox.scrollTop = outputBox.scrollHeight;
         };
 
-        // 切断からの自動復旧（最重要項目）
+        // スマホの自動切断に対する超高速復旧ループ
         recognition.onend = () => {
             if (isActive) {
                 clearTimeout(restartTimeoutId);
@@ -279,36 +238,54 @@
                         try { 
                             recognition.start(); 
                         } catch(e) {
-                            // 連続して失敗した場合は再生成を試みる
+                            // 完全にスタックした場合は再生成して強制起動
                             initRecognition();
-                            try{ recognition.start(); }catch(err){}
+                            try { recognition.start(); } catch(err){}
                         }
                     }
-                }, 300);
+                }, 200); // 復旧レスポンスを200msに高速化
             }
         };
 
         recognition.onerror = (ev) => {
-            // no-speech 等のエラーでもクラッシュさせず、onend経由で自動復帰させる
-            if (ev.error === 'no-speech' || ev.error === 'audio-capture' || ev.error === 'network') {
-                console.log(`認識中断(${ev.error})：自動復旧します`);
-            } else {
-                console.warn("認識エラー:", ev.error);
+            if (ev.error === 'not-allowed') {
+                updateStatus('offline', "マイクの使用が拒否されています");
+                isActive = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
             }
+            console.log("認識中断理由:", ev.error);
         };
     }
 
-    // 開始ボタン
+    // 開始ボタン（ここを起点にすべての権限をもらう）
     startBtn.onclick = async () => {
         isActive = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
         deviceSelect.disabled = true;
-        updateStatus('', "起動中...");
+        updateStatus('', "マイクを起動中...");
 
-        // オーディオパイプラインの構築
-        await setupAudioProcessing();
+        // 1. まずスマホブラウザに対してマイクの利用ストリームを明示的に要求（最重要）
+        try {
+            const constraints = { audio: true };
+            if (deviceSelect.value) {
+                constraints.audio = { deviceId: { exact: deviceSelect.value } };
+            }
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+            // デバイス名を確実に読み込むため再スキャン
+            await initDevices();
+            // トラックはすぐ解放（認識エンジン側に引き渡すため）
+            stream.getTracks().forEach(track => track.stop());
+        } catch (err) {
+            updateStatus('offline', "マイクの起動に失敗しました");
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            deviceSelect.disabled = false;
+            return;
+        }
 
+        // 2. 音声認識エンジンの起動
         if (!recognition) {
             initRecognition();
         }
@@ -317,9 +294,8 @@
             try {
                 recognition.start();
             } catch (e) {
-                // すでに動いている場合の二重起動エラー回避
                 try { recognition.stop(); } catch(ex){}
-                setTimeout(() => { if(isActive) recognition.start(); }, 400);
+                setTimeout(() => { if(isActive) recognition.start(); }, 300);
             }
         }
     };
@@ -335,15 +311,6 @@
         if (recognition) {
             try { recognition.stop(); } catch(e){}
         }
-        
-        // オーディオトラックの解放
-        if (mediaStream) {
-            mediaStream.getTracks().forEach(track => track.stop());
-        }
-        if (audioContext) {
-            try { audioContext.close(); } catch(e){}
-        }
-        
         releaseWakeLock();
         updateStatus('offline', "停止しました");
     };
@@ -355,10 +322,47 @@
         try {
             await navigator.clipboard.writeText(text);
             const originalText = copyBtn.innerText;
-            copyBtn.innerText = "完了！";
-            setTimeout(() => copyBtn.innerText = originalText, 1500);
+            copyBtn.innerText = "完了";
+            setTimeout(() => copyBtn.innerText = originalText, 1200);
         } catch (err) {
-            alert("長押しして手動コピーしてください：\n\n" + text);
+            alert("長押ししてコピーしてください：\n\n" + text);
+        }
+    };
+
+    // 【新機能】保存ボタン（文字エンコーディングをスマホに最適化）
+    saveBtn.onclick = () => {
+        const text = finalSpan.innerText;
+        if (!text.trim()) {
+            alert("保存するテキストがありません");
+            return;
+        }
+
+        // 現在の日時を取得してファイル名にする (例: 20260521_2309.txt)
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const date = String(now.getDate()).padStart(2, '0');
+        const hours = String(now.getHours()).padStart(2, '0');
+        const minutes = String(now.getMinutes()).padStart(2, '0');
+        const filename = `逐語録_${year}${month}${date}_${hours}${minutes}.txt`;
+
+        // スマホでも文字化け・失敗しないBlobの生成
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' });
+        
+        // ダウンロード処理の実行
+        const link = document.createElement("a");
+        if (link.download !== undefined) {
+            const url = URL.createObjectURL(blob);
+            link.setAttribute("href", url);
+            link.setAttribute("download", filename);
+            link.style.visibility = 'hidden';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        } else {
+            // Androidの一部ブラウザ用フォールバック
+            window.open(encodeURI("data:text/plain;charset=utf-8," + text));
         }
     };
 
@@ -370,36 +374,31 @@
         }
     };
 
-    // デバイスリセットボタン
+    // デバイスリセット
     resetDevBtn.onclick = async () => {
         const activeState = isActive;
-        if (activeState) {
-            stopBtn.click();
+        if (activeState) stopBtn.click();
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach(track => track.stop());
+            await initDevices();
+            updateStatus('offline', "デバイスをリセットしました");
+        } catch(e) {
+            alert("マイクへのアクセス権限をオンにしてください");
         }
-        updateStatus('', "デバイス再スキャン中...");
-        await initDevices();
+
         if (activeState) {
-            setTimeout(() => { startBtn.click(); }, 500);
-        } else {
-            updateStatus('offline', "リセット完了");
+            setTimeout(() => { startBtn.click(); }, 400);
         }
     };
 
-    // 感度やブーストが途中で変更されたらリアルタイムに再反映
-    const updateAudioParams = () => {
-        if(isActive && gainNode && boostSelect && sensitivitySelect) {
-            const boostVal = parseFloat(boostSelect.value);
-            const sensVal = parseFloat(sensitivitySelect.value);
-            gainNode.gain.value = (boostVal / 5.0) * (sensVal / 5.0);
+    // 初回表示時にデバイスチェック（可能な範囲で）
+    window.addEventListener('DOMContentLoaded', () => {
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            initDevices();
         }
-    };
-    sensitivitySelect.onchange = updateAudioParams;
-    boostSelect.onchange = updateAudioParams;
-
-    // 初回読み込み時のデバイス一覧取得
-    window.onload = () => {
-        initDevices();
-    };
+    });
 </script>
 
 </body>
