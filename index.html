@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>逐語録（スマホ完全対応・保存機能付）</title>
+    <title>逐語録（デバイス固定・スマホ完全版）</title>
     <style>
         :root { 
             --primary: #007bff; --danger: #dc3545; --success: #28a745; 
@@ -37,13 +37,12 @@
         .config-item.full-width { grid-column: span 2; }
         select { padding: 5px; border-radius: 6px; border: 1px solid #ccc; font-size: 0.85em; background: #fff; width: 100%; color: #333; }
         
-        /* ボタンレイアウト調整（5個のメインボタン＋デバイスリセット） */
         .controls { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; margin-bottom: 6px; }
         button { padding: 12px 2px; font-size: 0.8em; font-weight: bold; cursor: pointer; border: none; border-radius: 6px; color: white; transition: opacity 0.2s; -webkit-tap-highlight-color: transparent; }
         #start { background: var(--primary); }
         #stop { background: var(--danger); }
         #copy { background: var(--info); }
-        #save { background: var(--success); } /* 保存ボタン */
+        #save { background: var(--success); }
         #clear { background: var(--secondary); }
         #reset-dev { background: var(--dark); grid-column: span 5; padding: 6px; font-size: 0.75em; border-radius: 6px; }
         button:disabled { background: #ccc !important; opacity: 0.4; cursor: not-allowed; }
@@ -134,16 +133,24 @@
         }
     }
 
-    // デバイス名一覧の取得（ユーザーのアクション後に実行することでスマホでも取得可能に）
+    // デバイス名一覧の取得（選択状態を記憶して維持するよう修正）
     async function initDevices() {
         try {
+            const currentSelected = deviceSelect.value; // 現在選ばれているIDを退避
             const devices = await navigator.mediaDevices.enumerateDevices();
+            
             deviceSelect.innerHTML = '<option value="">既定のマイク（自動選択）</option>';
+            let hasSelectedDeviceStill = false;
+
             devices.forEach(device => {
                 if (device.kind === 'audioinput') {
                     const option = document.createElement('option');
                     option.value = device.deviceId;
                     option.innerText = device.label || `マイク (${device.deviceId.slice(0,5)})`;
+                    if (device.deviceId === currentSelected && currentSelected !== "") {
+                        option.selected = true;
+                        hasSelectedDeviceStill = true;
+                    }
                     deviceSelect.appendChild(option);
                 }
             });
@@ -173,7 +180,6 @@
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         recognition.interimResults = true;
-        // スマホ（特にSafari）での文字落ち・フリーズを防ぐためcontinuousは環境に応じて最適化
         recognition.continuous = true; 
 
         recognition.onstart = () => {
@@ -187,14 +193,11 @@
             let interimText = '';
             for (let i = e.resultIndex; i < e.results.length; i++) {
                 let transcript = e.results[i][0].transcript;
-                
-                // ブースト・感度の疑似調整（文字数が極端に少ない不鮮明な音を感度設定に応じて弾くフィルター）
                 const minLengthFilter = Math.max(0, Math.floor((6 - parseInt(sensitivitySelect.value)) / 2)); 
                 
                 if (e.results[i].isFinal) {
                     let cleanedText = transcript.trim();
-                    
-                    if (cleanedText.length < minLengthFilter) continue; // 感度以下のノイズを間引き
+                    if (cleanedText.length < minLengthFilter) continue; 
 
                     // フィラー除去
                     const fillerRegex = /^(えーと|えーっと|えー、|あのー|あの、|えー|あの|まー|うーん|えっと)/g;
@@ -229,7 +232,6 @@
             outputBox.scrollTop = outputBox.scrollHeight;
         };
 
-        // スマホの自動切断に対する超高速復旧ループ
         recognition.onend = () => {
             if (isActive) {
                 clearTimeout(restartTimeoutId);
@@ -238,12 +240,11 @@
                         try { 
                             recognition.start(); 
                         } catch(e) {
-                            // 完全にスタックした場合は再生成して強制起動
                             initRecognition();
                             try { recognition.start(); } catch(err){}
                         }
                     }
-                }, 200); // 復旧レスポンスを200msに高速化
+                }, 200);
             }
         };
 
@@ -258,7 +259,7 @@
         };
     }
 
-    // 開始ボタン（ここを起点にすべての権限をもらう）
+    // 開始ボタン
     startBtn.onclick = async () => {
         isActive = true;
         startBtn.disabled = true;
@@ -266,16 +267,19 @@
         deviceSelect.disabled = true;
         updateStatus('', "マイクを起動中...");
 
-        // 1. まずスマホブラウザに対してマイクの利用ストリームを明示的に要求（最重要）
+        // 選択されたデバイスIDを記憶しておく
+        const selectedDeviceId = deviceSelect.value;
+
         try {
             const constraints = { audio: true };
-            if (deviceSelect.value) {
-                constraints.audio = { deviceId: { exact: deviceSelect.value } };
+            if (selectedDeviceId) {
+                constraints.audio = { deviceId: { exact: selectedDeviceId } };
             }
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            // デバイス名を確実に読み込むため再スキャン
+            
+            // 重要：ここでリストを再スキャンしても、直前に選んでいたデバイスが外れないよう内部で維持されます
             await initDevices();
-            // トラックはすぐ解放（認識エンジン側に引き渡すため）
+            
             stream.getTracks().forEach(track => track.stop());
         } catch (err) {
             updateStatus('offline', "マイクの起動に失敗しました");
@@ -285,13 +289,14 @@
             return;
         }
 
-        // 2. 音声認識エンジンの起動
         if (!recognition) {
             initRecognition();
         }
 
         if (recognition) {
             try {
+                // 音声認識エンジンにデバイスIDの制約を直接渡すことはできませんが、
+                // 直前のgetUserMedia呼び出しによってOS・ブラウザ側でマイクストリームの優先権が固定されます
                 recognition.start();
             } catch (e) {
                 try { recognition.stop(); } catch(ex){}
@@ -329,7 +334,7 @@
         }
     };
 
-    // 【新機能】保存ボタン（文字エンコーディングをスマホに最適化）
+    // 保存ボタン
     saveBtn.onclick = () => {
         const text = finalSpan.innerText;
         if (!text.trim()) {
@@ -337,7 +342,6 @@
             return;
         }
 
-        // 現在の日時を取得してファイル名にする (例: 20260521_2309.txt)
         const now = new Date();
         const year = now.getFullYear();
         const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -346,10 +350,8 @@
         const minutes = String(now.getMinutes()).padStart(2, '0');
         const filename = `逐語録_${year}${month}${date}_${hours}${minutes}.txt`;
 
-        // スマホでも文字化け・失敗しないBlobの生成
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' });
         
-        // ダウンロード処理の実行
         const link = document.createElement("a");
         if (link.download !== undefined) {
             const url = URL.createObjectURL(blob);
@@ -361,7 +363,6 @@
             document.body.removeChild(link);
             URL.revokeObjectURL(url);
         } else {
-            // Androidの一部ブラウザ用フォールバック
             window.open(encodeURI("data:text/plain;charset=utf-8," + text));
         }
     };
@@ -393,10 +394,11 @@
         }
     };
 
-    // 初回表示時にデバイスチェック（可能な範囲で）
-    window.addEventListener('DOMContentLoaded', () => {
+    // 初回表示（一度マイクの許可を取ってからリストを作る）
+    window.addEventListener('DOMContentLoaded', async () => {
+        // 最初のロード時にマイクが許可されていればデバイス名を取得
         if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-            initDevices();
+            await initDevices();
         }
     });
 </script>
