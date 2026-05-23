@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (音量ブースト機能付き)</title>
+    <title>超安定文字起こしツール (レイアウト修正版)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -37,25 +37,28 @@
             height: 100%;
             max-width: 900px;
             margin: 0 auto;
-            padding: 12px;
-            padding-bottom: calc(12px + env(safe-area-inset-bottom));
-            gap: 10px;
+            padding: 10px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+            gap: 8px;
         }
 
+        /* ヘッダーパネルが広がりすぎないよう上限を設定 */
         .header-panel {
             background: var(--card-bg);
-            padding: 12px 16px;
+            padding: 10px 14px;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.03);
             flex-shrink: 0;
+            max-height: 150px;
+            overflow-y: auto; /* 画面が極端に狭い時はパネル内スクロール */
         }
 
         .status-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
-            font-size: 0.9rem;
+            margin-bottom: 8px;
+            font-size: 0.85rem;
             font-weight: bold;
         }
 
@@ -85,47 +88,47 @@
         .device-controls {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
         }
 
         .select-row {
             display: flex;
-            gap: 8px;
+            gap: 6px;
             align-items: center;
         }
 
         .select-label {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             font-weight: bold;
-            min-width: 75px;
+            min-width: 65px;
             color: var(--secondary);
         }
 
         select {
             flex: 1;
-            padding: 10px;
-            border-radius: 8px;
+            padding: 6px 8px;
+            border-radius: 6px;
             border: 1px solid var(--border-color);
-            font-size: 0.95rem;
+            font-size: 0.85rem;
             background: #fff;
             outline: none;
+            height: 32px;
         }
 
         .text-panel {
-            flex: 1;
-            min-height: 0;
-            position: relative;
+            flex: 1; /* ここが残りの画面スペースを自動で全て埋める */
+            min-height: 0; 
         }
 
         textarea {
             width: 100%;
             height: 100%;
             resize: none;
-            padding: 16px;
+            padding: 12px;
             border-radius: 12px;
             border: 1px solid var(--border-color);
-            font-size: 1.1rem;
-            line-height: 1.6;
+            font-size: 1.05rem;
+            line-height: 1.5;
             outline: none;
             background-color: var(--card-bg);
             box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
@@ -134,41 +137,42 @@
 
         textarea:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 3px rgba(0,123,255,0.15);
         }
 
+        /* 下部ボタンエリアが絶対に潰れない・被らないように固定 */
         .controls-panel {
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             flex-shrink: 0;
         }
 
         .btn-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
+            gap: 6px;
         }
 
         .btn-grid-sub {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
+            gap: 6px;
         }
 
         button {
-            padding: 14px 10px;
+            padding: 12px 8px;
             border: none;
             border-radius: 8px;
-            font-size: 1rem;
+            font-size: 0.95rem;
             font-weight: bold;
             color: #fff;
             cursor: pointer;
-            transition: background-color 0.1s, transform 0.05s;
+            transition: background-color 0.1s;
             -webkit-tap-highlight-color: transparent;
             display: flex;
             align-items: center;
             justify-content: center;
+            height: 44px; /* タップしやすい高さを固定 */
         }
 
         button:active {
@@ -187,15 +191,17 @@
         .btn-copy { background-color: var(--primary); }
         .btn-save { background-color: #17a2b8; }
         .btn-clear { background-color: var(--secondary); }
-        .btn-reset { background-color: #6f42c1; font-size: 0.85rem; padding: 10px 12px; }
+        .btn-reset { background-color: #6f42c1; font-size: 0.75rem; height: 32px; padding: 0 8px; }
 
+        /* PC・タブレット用の広幅レイアウト調整 */
         @media (min-width: 600px) {
             .container {
-                padding: 20px;
-                gap: 16px;
+                padding: 16px;
+                gap: 12px;
             }
             .header-panel {
-                padding: 16px 20px;
+                padding: 12px 16px;
+                max-height: none;
             }
             .device-controls {
                 flex-direction: row;
@@ -204,11 +210,14 @@
             }
             .select-row {
                 flex: 1;
-                min-width: 250px;
+                min-width: 220px;
+            }
+            select {
+                font-size: 0.9rem;
             }
             textarea {
-                font-size: 1.2rem;
-                padding: 24px;
+                font-size: 1.15rem;
+                padding: 18px;
             }
             .controls-panel {
                 flex-direction: row;
@@ -220,8 +229,8 @@
                 flex: 2;
             }
             button {
-                padding: 16px 12px;
-                font-size: 1.05rem;
+                font-size: 1rem;
+                height: 48px;
             }
         }
     </style>
@@ -290,7 +299,6 @@
     let wakeLock = null;
     let restartTimer = null;
 
-    // Web Audio API 関連の変数（音量増幅用）
     let audioContext = null;
     let audioStream = null;
     let gainNode = null;
@@ -305,7 +313,7 @@
     const btnReset = document.getElementById('btnReset');
     const deviceSelect = document.getElementById('deviceSelect');
     const sensitivitySelect = document.getElementById('sensitivitySelect');
-    const boostSelect = document.getElementById('boostSelect'); // 音量ブースト用セレクト
+    const boostSelect = document.getElementById('boostSelect');
     const resultTextarea = document.getElementById('resultTextarea');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -332,43 +340,27 @@
         }
     }
 
-    // Web Audio API で音声ストリームをキャプチャし増幅する関数
     async function setupAudioBoost() {
-        // 古いストリームやコンテキストがあれば破棄
         closeAudioContext();
-
         const deviceId = deviceSelect.value;
         const constraints = {
             audio: deviceId ? { deviceId: { exact: deviceId } } : true
         };
 
         try {
-            // 1. 生のマイク音声を取得
             audioStream = await navigator.mediaDevices.getUserMedia(constraints);
-            
-            // 2. 音響処理コンテキストの作成
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // 3. マイク入力をソースノード化
             mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
-            
-            // 4. 増幅器（GainNode）の作成と設定
             gainNode = audioContext.createGain();
-            const boostValue = parseFloat(boostSelect.value);
-            gainNode.gain.value = boostValue; // ここで音量を設定値(1.0〜3.0)に倍増
-            
-            // 5. 加工後の音声を流し込む仮想出力ストリーム（Destination）を作成
+            gainNode.gain.value = parseFloat(boostSelect.value);
             mediaStreamDestination = audioContext.createMediaStreamDestination();
             
-            // 6. ノードを接続 (生マイク -> 増幅器 -> 仮想出力ストリーム)
             mediaStreamSource.connect(gainNode);
             gainNode.connect(mediaStreamDestination);
             
-            // 7. 音声認識エンジンに渡すための、増幅済みの新しいストリームを返す
             return mediaStreamDestination.stream;
         } catch (err) {
             console.error("オーディオブーストの設定に失敗しました:", err);
-            // 失敗した場合はフォールバックとして生のストリームを使用
             return audioStream;
         }
     }
@@ -400,8 +392,7 @@
             clearTimeout(restartTimer);
         }
 
-        // 毎回起動時に設定されたマイク音量をWeb Audio API経由で増幅する
-        const boostedStream = await setupAudioBoost();
+        await setupAudioBoost();
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
@@ -426,7 +417,6 @@
                     text = text.replace(/[、。]+$/, "");
                     if (text) {
                         const targetLine = text + "。";
-                        
                         const isDuplicate = finalizedLines.length > 0 && 
                             (finalizedLines[finalizedLines.length - 1] === targetLine || 
                              finalizedLines.slice(-2).includes(targetLine));
@@ -462,16 +452,14 @@
 
             if (isRunning) {
                 renderText("");
-                
                 const delay = parseInt(sensitivitySelect.value, 10);
-                
                 restartTimer = setTimeout(() => {
                     if (isRunning) {
                         try { recognition.start(); } catch(e) { startRecognition(); }
                     }
                 }, delay); 
             } else {
-                closeAudioContext(); // 完全に停止した時はオーディオ処理も閉じる
+                closeAudioContext();
                 updateStatus('connected', '待機中');
                 btnStart.disabled = false;
                 btnStop.disabled = true;
@@ -479,9 +467,6 @@
         };
 
         try {
-            // 一部の環境において、認識器に直接ブースト済みのストリーム（音源）を結びつける
-            // Web Speech API自体は自動的にシステムマイクを拾いますが、
-            // AudioContextが動いていることでマイク入力自体のハードウェア利得やキャプチャ感度が向上します。
             recognition.start();
         } catch(e) {
             console.error("開始失敗:", e);
@@ -555,7 +540,7 @@
         const blob = new Blob([text], { type: 'text/plain' });
         const a = document.createElement('a');
         const now = new Date();
-        const filename = `起こし文_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.txt`;
+        const filename = `起こし文_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate')+1).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.txt`;
         
         a.href = URL.createObjectURL(blob);
         a.download = filename;
@@ -575,7 +560,6 @@
         initDevices();
     });
 
-    // ブースト倍率が途中で変更されたら、認識動作中であれば即座に適用する
     boostSelect.addEventListener('change', () => {
         if (gainNode && audioContext) {
             gainNode.gain.value = parseFloat(boostSelect.value);
