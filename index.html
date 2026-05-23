@@ -24,6 +24,7 @@
         }
 
         body, html {
+            /* svh, dvh対応ブラウザなら優先、なければ100%にフォールバック */
             height: 100%;
             height: 100dvh;
             background-color: var(--bg-color);
@@ -31,23 +32,25 @@
             overflow: hidden;
         }
 
+        /* 画面全体を包むコンテナ */
         .container {
             display: flex;
             flex-direction: column;
             height: 100%;
-            max-width: 900px;
+            max-width: 900px; /* タブレットやPCで横に広がりすぎないように制限 */
             margin: 0 auto;
             padding: 12px;
-            padding-bottom: calc(12px + env(safe-area-inset-bottom));
+            padding-bottom: calc(12px + env(safe-area-inset-bottom)); /* iPhoneのホームバー対策 */
             gap: 10px;
         }
 
+        /* ヘッダー・デバイス設定 */
         .header-panel {
             background: var(--card-bg);
             padding: 12px 16px;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.03);
-            flex-shrink: 0;
+            flex-shrink: 0; /* 縮まないように固定 */
         }
 
         .status-bar {
@@ -97,9 +100,10 @@
             outline: none;
         }
 
+        /* テキストエリア（画面サイズに合わせて伸縮する主役エリア） */
         .text-panel {
             flex: 1;
-            min-height: 0;
+            min-height: 0; /* Flexboxの縮小バグを防ぐ重要プロパティ */
             position: relative;
         }
 
@@ -123,11 +127,12 @@
             box-shadow: 0 0 0 3px rgba(0,123,255,0.15);
         }
 
+        /* コントロール操作系（下部に固定） */
         .controls-panel {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            flex-shrink: 0;
+            flex-shrink: 0; /* 縮まないように固定 */
         }
 
         .btn-grid {
@@ -175,6 +180,7 @@
         .btn-clear { background-color: var(--secondary); }
         .btn-reset { background-color: #6f42c1; font-size: 0.85rem; padding: 10px 12px; }
 
+        /* タブレット・PCなど画面が広い端末向けの最適化 */
         @media (min-width: 600px) {
             .container {
                 padding: 20px;
@@ -188,6 +194,7 @@
                 padding: 24px;
             }
             .controls-panel {
+                /* 横長画面ではボタンを1行にまとめる */
                 flex-direction: row;
             }
             .btn-grid {
@@ -206,6 +213,7 @@
 <body>
 
 <div class="container">
+    <!-- 上部: ステータス＆マイク選択 -->
     <div class="header-panel">
         <div class="status-bar">
             <span>音声認識サーバ接続状態:</span>
@@ -222,10 +230,12 @@
         </div>
     </div>
 
+    <!-- 中部: 伸縮するテキスト表示エリア -->
     <div class="text-panel">
         <textarea id="resultTextarea" placeholder="「開始」ボタンを押して話してください..." readonly></textarea>
     </div>
 
+    <!-- 下部: 画面外に絶対にはみ出さないボタン群 -->
     <div class="controls-panel">
         <div class="btn-grid">
             <button id="btnStart" class="btn-start">開始</button>
@@ -256,7 +266,6 @@
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
 
-    // スマホのテキスト重複バグを防ぐため、確定行を配列で厳密に一元管理
     let finalizedLines = [];
     let currentInterim = "";
 
@@ -291,9 +300,7 @@
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
-        
-        // 連続認識をtrueにし、文章確定の瞬間もマイクの耳を塞がないようにする
-        recognition.continuous = true; 
+        recognition.continuous = false; 
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
@@ -303,12 +310,7 @@
 
         recognition.onresult = (event) => {
             let interimText = "";
-            let tempFinalized = [];
-
-            // 【超重要】スマホの重複対策
-            // indexからスキャンせず、常に0（冒頭）から全スキャンし直すことで
-            // モバイルブラウザ側が過去の確定文字を再送してきても重複結合させない
-            for (let i = 0; i < event.results.length; ++i) {
+            for (let i = event.resultIndex; i < event.results.length; ++i) {
                 const result = event.results[i];
                 let text = result[0].transcript.trim();
                 
@@ -316,21 +318,16 @@
 
                 if (result.isFinal) {
                     text = text.replace(/[、。]+$/, "");
-                    if (text) {
-                        tempFinalized.push(text + "。");
+                    if (text && (finalizedLines.length === 0 || finalizedLines[finalizedLines.length - 1] !== text + "。")) {
+                        finalizedLines.push(text + "。");
                     }
+                    currentInterim = ""; 
                 } else {
                     interimText = text;
+                    currentInterim = text;
                 }
             }
-
-            // スキャンした最新の正しい確定結果の形をマスター配列に同期
-            if (tempFinalized.length > 0) {
-                finalizedLines = tempFinalized;
-            }
-
-            currentInterim = interimText;
-            renderText();
+            renderText(interimText);
         };
 
         recognition.onerror = (event) => {
@@ -338,25 +335,21 @@
         };
 
         recognition.onend = () => {
-            // セッションが切れた際に、未確定の文字が残っていれば最後に救出する
             if (currentInterim) {
                 let text = currentInterim.replace(/[、。]+$/, "").trim();
-                if (text) {
-                    const line = text + "。";
-                    if (!finalizedLines.includes(line)) {
-                        finalizedLines.push(line);
-                    }
+                if (text && (finalizedLines.length === 0 || finalizedLines[finalizedLines.length - 1] !== text + "。")) {
+                    finalizedLines.push(text + "。");
                 }
                 currentInterim = "";
             }
 
-            // ユーザーが停止を押していなければ、無音等による瞬断からの即時（0秒）再スタート
             if (isRunning) {
-                try {
-                    recognition.start();
-                } catch(e) {
-                    setTimeout(() => { if (isRunning) startRecognition(); }, 50);
-                }
+                renderText("");
+                setTimeout(() => {
+                    if (isRunning) {
+                        try { recognition.start(); } catch(e) { startRecognition(); }
+                    }
+                }, 50); 
             } else {
                 updateStatus('connected', '待機中');
                 btnStart.disabled = false;
@@ -367,16 +360,16 @@
         try {
             recognition.start();
         } catch(e) {
-            console.error("開始失敗:", e);
+            console.error("開始失敗リトライ:", e);
         }
     }
 
-    function renderText() {
-        let display = finalizedLines.join("\n");
-        if (currentInterim) {
-            display += (display ? "\n" : "") + currentInterim;
+    function renderText(interimText) {
+        let currentDisplay = finalizedLines.join("\n");
+        if (interimText) {
+            currentDisplay += (currentDisplay ? "\n" : "") + interimText;
         }
-        resultTextarea.value = display;
+        resultTextarea.value = currentDisplay;
         autoScroll();
     }
 
@@ -405,12 +398,6 @@
         isRunning = true;
         btnStart.disabled = true;
         btnStop.disabled = false;
-        
-        // 開始ごとに初期化
-        finalizedLines = [];
-        currentInterim = "";
-        resultTextarea.value = "";
-
         startRecognition();
         await requestWakeLock();
     });
@@ -457,6 +444,7 @@
         initDevices();
     });
 
+    // ビューポートサイズ変更・ソフトウェアキーボード対策
     window.addEventListener('resize', autoScroll);
 
     window.addEventListener('DOMContentLoaded', () => {
