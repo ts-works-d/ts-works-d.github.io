@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (レイアウト修正版)</title>
+    <title>超安定文字起こしツール (完全修正版)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -42,15 +42,12 @@
             gap: 8px;
         }
 
-        /* ヘッダーパネルが広がりすぎないよう上限を設定 */
         .header-panel {
             background: var(--card-bg);
             padding: 10px 14px;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.03);
             flex-shrink: 0;
-            max-height: 150px;
-            overflow-y: auto; /* 画面が極端に狭い時はパネル内スクロール */
         }
 
         .status-bar {
@@ -95,12 +92,13 @@
             display: flex;
             gap: 6px;
             align-items: center;
+            width: 100%;
         }
 
         .select-label {
             font-size: 0.8rem;
             font-weight: bold;
-            min-width: 65px;
+            min-width: 75px;
             color: var(--secondary);
         }
 
@@ -113,10 +111,11 @@
             background: #fff;
             outline: none;
             height: 32px;
+            min-width: 0; /* 幅縮小時の崩れ防止 */
         }
 
         .text-panel {
-            flex: 1; /* ここが残りの画面スペースを自動で全て埋める */
+            flex: 1;
             min-height: 0; 
         }
 
@@ -135,11 +134,6 @@
             -webkit-appearance: none;
         }
 
-        textarea:focus {
-            border-color: var(--primary);
-        }
-
-        /* 下部ボタンエリアが絶対に潰れない・被らないように固定 */
         .controls-panel {
             display: flex;
             flex-direction: column;
@@ -155,12 +149,12 @@
 
         .btn-grid-sub {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
+            grid-template-columns: repeat(3, 1fr); /* リセットをここに統合して3列に変更 */
             gap: 6px;
         }
 
         button {
-            padding: 12px 8px;
+            padding: 12px 4px;
             border: none;
             border-radius: 8px;
             font-size: 0.95rem;
@@ -172,7 +166,7 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            height: 44px; /* タップしやすい高さを固定 */
+            height: 44px;
         }
 
         button:active {
@@ -191,9 +185,8 @@
         .btn-copy { background-color: var(--primary); }
         .btn-save { background-color: #17a2b8; }
         .btn-clear { background-color: var(--secondary); }
-        .btn-reset { background-color: #6f42c1; font-size: 0.75rem; height: 32px; padding: 0 8px; }
+        .btn-reset { background-color: #6f42c1; font-size: 0.9rem; }
 
-        /* PC・タブレット用の広幅レイアウト調整 */
         @media (min-width: 600px) {
             .container {
                 padding: 16px;
@@ -201,7 +194,6 @@
             }
             .header-panel {
                 padding: 12px 16px;
-                max-height: none;
             }
             .device-controls {
                 flex-direction: row;
@@ -226,7 +218,7 @@
                 flex: 3;
             }
             .btn-grid-sub {
-                flex: 2;
+                flex: 3;
             }
             button {
                 font-size: 1rem;
@@ -252,7 +244,6 @@
                 <select id="deviceSelect">
                     <option value="">標準のマイク (デフォルト)</option>
                 </select>
-                <button id="btnReset" class="btn-reset">リセット</button>
             </div>
             <div class="select-row">
                 <span class="select-label">応答感度:</span>
@@ -288,6 +279,7 @@
         <div class="btn-grid-sub">
             <button id="btnSave" class="btn-save">保存</button>
             <button id="btnClear" class="btn-clear">クリア</button>
+            <button id="btnReset" class="btn-reset">マイク再診</button>
         </div>
     </div>
 </div>
@@ -540,7 +532,8 @@
         const blob = new Blob([text], { type: 'text/plain' });
         const a = document.createElement('a');
         const now = new Date();
-        const filename = `起こし文_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate')+1).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.txt`;
+        // 構文エラーを修正しました
+        const filename = `起こし文_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.txt`;
         
         a.href = URL.createObjectURL(blob);
         a.download = filename;
