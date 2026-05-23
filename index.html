@@ -322,17 +322,33 @@
         }
     }
 
+    // 音声認識インスタンスとタイマーを安全に完全クリアする関数
+    function destroyRecognition() {
+        if (restartTimer) {
+            clearTimeout(restartTimer);
+            restartTimer = null;
+        }
+        if (recognition) {
+            // イベントを無効化して古いインスタンスのコールバック暴走を阻止
+            recognition.onstart = null;
+            recognition.onresult = null;
+            recognition.onerror = null;
+            recognition.onend = null;
+            try { 
+                recognition.abort(); 
+            } catch(e){}
+            recognition = null;
+        }
+    }
+
     function startRecognition() {
         if (!SpeechRecognition) {
             alert("お使いのブラウザは音声認識に対応していません。SafariかChromeの最新版でお試しください。");
             return;
         }
 
-        if (recognition) {
-            try { recognition.abort(); } catch(e){}
-        }
-
-        if (restartTimer) clearTimeout(restartTimer);
+        // 新しく作る前に古いインスタンスを徹底掃除
+        destroyRecognition();
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
@@ -395,14 +411,11 @@
             if (isRunning) {
                 renderText("");
                 const delay = Math.max(400, parseInt(sensitivitySelect.value, 10));
+                
+                if (restartTimer) clearTimeout(restartTimer);
                 restartTimer = setTimeout(() => {
                     if (isRunning) {
-                        try { 
-                            recognition.start(); 
-                        } catch(e) { 
-                            console.log("再起動リトライ");
-                            startRecognition(); 
-                        }
+                        startRecognition(); // 安全にインスタンスを再生成して起動
                     }
                 }, delay); 
             } else {
@@ -417,6 +430,7 @@
         } catch(e) {
             console.error("開始失敗:", e);
             if (isRunning) {
+                if (restartTimer) clearTimeout(restartTimer);
                 restartTimer = setTimeout(() => startRecognition(), 1000);
             }
         }
@@ -456,8 +470,6 @@
         isRunning = true;
         btnStart.disabled = true;
         btnStop.disabled = false;
-        
-        // 【修正完了】過去のデータをクリアする処理を削除し、追記できるようにしました
         currentInterim = "";
 
         startRecognition();
@@ -466,12 +478,11 @@
 
     btnStop.addEventListener('click', () => {
         isRunning = false;
-        if (restartTimer) clearTimeout(restartTimer);
-        if (recognition) {
-            try { recognition.stop(); } catch(e){}
-        }
+        destroyRecognition(); // 停止時にもクリーンアップを徹底
         releaseWakeLock();
         updateStatus('connected', '待機中');
+        btnStart.disabled = false;
+        btnStop.disabled = true;
     });
 
     btnCopy.addEventListener('click', () => {
@@ -517,9 +528,7 @@
 
     document.addEventListener('visibilitychange', async () => {
         if (isRunning && document.visibilityState === 'visible') {
-            if (recognition) {
-                try { recognition.start(); } catch(e) {}
-            }
+            startRecognition(); // タブ復帰時も安全な再起動を適用
             await requestWakeLock();
         }
     });
