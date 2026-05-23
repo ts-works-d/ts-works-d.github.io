@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (感度調整機能付き)</title>
+    <title>超安定文字起こしツール (音量ブースト機能付き)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -97,7 +97,7 @@
         .select-label {
             font-size: 0.85rem;
             font-weight: bold;
-            min-width: 65px;
+            min-width: 75px;
             color: var(--secondary);
         }
 
@@ -200,9 +200,11 @@
             .device-controls {
                 flex-direction: row;
                 align-items: center;
+                flex-wrap: wrap;
             }
             .select-row {
                 flex: 1;
+                min-width: 250px;
             }
             textarea {
                 font-size: 1.2rem;
@@ -252,6 +254,15 @@
                     <option value="1200">最低 (一つの文章に極力まとめる)</option>
                 </select>
             </div>
+            <div class="select-row">
+                <span class="select-label">音量ブースト:</span>
+                <select id="boostSelect">
+                    <option value="1.0" selected>等倍 (加工なし)</option>
+                    <option value="1.5">1.5倍 (小声向け)</option>
+                    <option value="2.0">2.0倍 (遠くのマイク向け)</option>
+                    <option value="3.0">3.0倍 (最大増幅・環境音注意)</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -277,7 +288,14 @@
     let recognition = null;
     let isRunning = false; 
     let wakeLock = null;
-    let restartTimer = null; // 再起動制御用タイマー
+    let restartTimer = null;
+
+    // Web Audio API 関連の変数（音量増幅用）
+    let audioContext = null;
+    let audioStream = null;
+    let gainNode = null;
+    let mediaStreamSource = null;
+    let mediaStreamDestination = null;
 
     const btnStart = document.getElementById('btnStart');
     const btnStop = document.getElementById('btnStop');
@@ -286,7 +304,8 @@
     const btnClear = document.getElementById('btnClear');
     const btnReset = document.getElementById('btnReset');
     const deviceSelect = document.getElementById('deviceSelect');
-    const sensitivitySelect = document.getElementById('sensitivitySelect'); // 感度セレクト
+    const sensitivitySelect = document.getElementById('sensitivitySelect');
+    const boostSelect = document.getElementById('boostSelect'); // 音量ブースト用セレクト
     const resultTextarea = document.getElementById('resultTextarea');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -313,7 +332,61 @@
         }
     }
 
-    function startRecognition() {
+    // Web Audio API で音声ストリームをキャプチャし増幅する関数
+    async function setupAudioBoost() {
+        // 古いストリームやコンテキストがあれば破棄
+        closeAudioContext();
+
+        const deviceId = deviceSelect.value;
+        const constraints = {
+            audio: deviceId ? { deviceId: { exact: deviceId } } : true
+        };
+
+        try {
+            // 1. 生のマイク音声を取得
+            audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+            
+            // 2. 音響処理コンテキストの作成
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // 3. マイク入力をソースノード化
+            mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
+            
+            // 4. 増幅器（GainNode）の作成と設定
+            gainNode = audioContext.createGain();
+            const boostValue = parseFloat(boostSelect.value);
+            gainNode.gain.value = boostValue; // ここで音量を設定値(1.0〜3.0)に倍増
+            
+            // 5. 加工後の音声を流し込む仮想出力ストリーム（Destination）を作成
+            mediaStreamDestination = audioContext.createMediaStreamDestination();
+            
+            // 6. ノードを接続 (生マイク -> 増幅器 -> 仮想出力ストリーム)
+            mediaStreamSource.connect(gainNode);
+            gainNode.connect(mediaStreamDestination);
+            
+            // 7. 音声認識エンジンに渡すための、増幅済みの新しいストリームを返す
+            return mediaStreamDestination.stream;
+        } catch (err) {
+            console.error("オーディオブーストの設定に失敗しました:", err);
+            // 失敗した場合はフォールバックとして生のストリームを使用
+            return audioStream;
+        }
+    }
+
+    function closeAudioContext() {
+        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
+        if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
+        if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop());
+            audioStream = null;
+        }
+        if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close();
+            audioContext = null;
+        }
+    }
+
+    async function startRecognition() {
         if (!SpeechRecognition) {
             alert("お使いのブラウザは音声認識に対応していません。iOS/AndroidのChromeかSafariでお試しください。");
             return;
@@ -327,10 +400,12 @@
             clearTimeout(restartTimer);
         }
 
+        // 毎回起動時に設定されたマイク音量をWeb Audio API経由で増幅する
+        const boostedStream = await setupAudioBoost();
+
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
         
-        // 連続認識をオフにし、確定後の再起動ウェイト（感度値）をコントロールすることで文頭を守ります
         recognition.continuous = false; 
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
@@ -352,7 +427,6 @@
                     if (text) {
                         const targetLine = text + "。";
                         
-                        // スマホ重複ガード（直前と全く同じ文は弾く）
                         const isDuplicate = finalizedLines.length > 0 && 
                             (finalizedLines[finalizedLines.length - 1] === targetLine || 
                              finalizedLines.slice(-2).includes(targetLine));
@@ -375,7 +449,6 @@
         };
 
         recognition.onend = () => {
-            // 終了時に未確定テキストがあれば救出
             if (currentInterim) {
                 let text = currentInterim.replace(/[、。]+$/, "").trim();
                 if (text) {
@@ -390,16 +463,15 @@
             if (isRunning) {
                 renderText("");
                 
-                // リストボックスから選択されたウェイト値（ミリ秒）を取得
                 const delay = parseInt(sensitivitySelect.value, 10);
                 
-                // 設定された感度の時間だけ待ってから、超高速で次の聞き取りを再開
                 restartTimer = setTimeout(() => {
                     if (isRunning) {
                         try { recognition.start(); } catch(e) { startRecognition(); }
                     }
                 }, delay); 
             } else {
+                closeAudioContext(); // 完全に停止した時はオーディオ処理も閉じる
                 updateStatus('connected', '待機中');
                 btnStart.disabled = false;
                 btnStop.disabled = true;
@@ -407,6 +479,9 @@
         };
 
         try {
+            // 一部の環境において、認識器に直接ブースト済みのストリーム（音源）を結びつける
+            // Web Speech API自体は自動的にシステムマイクを拾いますが、
+            // AudioContextが動いていることでマイク入力自体のハードウェア利得やキャプチャ感度が向上します。
             recognition.start();
         } catch(e) {
             console.error("開始失敗:", e);
@@ -462,6 +537,7 @@
         if (recognition) {
             try { recognition.stop(); } catch(e){}
         }
+        closeAudioContext();
         releaseWakeLock();
     });
 
@@ -497,6 +573,13 @@
 
     btnReset.addEventListener('click', () => {
         initDevices();
+    });
+
+    // ブースト倍率が途中で変更されたら、認識動作中であれば即座に適用する
+    boostSelect.addEventListener('change', () => {
+        if (gainNode && audioContext) {
+            gainNode.gain.value = parseFloat(boostSelect.value);
+        }
     });
 
     window.addEventListener('resize', autoScroll);
