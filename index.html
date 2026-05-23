@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (スマホ・音量安全対応版)</title>
+    <title>超安定文字起こしツール (スマホ・5%刻み音量版)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -204,7 +204,7 @@
         .vol-value {
             font-size: 0.8rem;
             font-weight: bold;
-            min-width: 35px;
+            min-width: 42px;
             text-align: right;
             color: var(--secondary);
         }
@@ -384,7 +384,7 @@
             <div class="select-row">
                 <span class="select-label">再生音量:</span>
                 <div class="vol-container">
-                    <input type="range" id="monitorVolume" min="0" max="2" step="0.1" value="1">
+                    <input type="range" id="monitorVolume" min="0" max="2" step="0.05" value="1">
                     <span id="volValue" class="vol-value">100%</span>
                 </div>
             </div>
@@ -439,9 +439,7 @@
     let audioCtx = null;
     let audioSource = null;
     let monitorGainNode = null;
-    let recognitionGainNode = null;
 
-    // スマホ環境（iOS/Android）かどうかの判定フラグ
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
     const btnStart = document.getElementById('btnStart');
@@ -472,9 +470,8 @@
     let finalizedLines = [];
     let currentInterim = "";
 
-    // モバイル環境でなければ「内部ブースト」を表示（PCでは高度な分離が可能）
     if (!isMobile) {
-        boostRow.style.style = 'flex'; // PC用表示
+        boostRow.style.display = 'flex'; 
     }
 
     // タブ切り替え
@@ -542,12 +539,11 @@
         }
     });
 
-    // 再生音量（モニター音量）スライダー変更
+    // 再生音量スライダー変更イベント (5%刻みに完全対応)
     monitorVolume.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         volValue.innerText = `${Math.round(val * 100)}%`;
         
-        // スマホではGainNode遮断リスクがあるため、安全に通常ボリュームノードとハイブリッド制御
         if (monitorGainNode) {
             monitorGainNode.gain.setValueAtTime(val, audioCtx.currentTime);
         } else {
@@ -735,11 +731,9 @@
         currentInterim = "";
 
         if (currentMode === 'media') {
-            // モバイル端末でのバグを防ぐため、ユーザーが「開始」をタップした瞬間にのみAudioContextを生成
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 
-                // モバイル環境以外（PC）のみ、音声遮断の起きない安全な完全ルート分離を行う
                 if (!isMobile) {
                     audioSource = audioCtx.createMediaElementSource(audioPlayer);
                     monitorGainNode = audioCtx.createGain();
