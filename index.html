@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (スマホ完全最適化版)</title>
+    <title>超安定文字起こしツール (スマホ・追記完全対応版)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -261,7 +261,7 @@
     </div>
 
     <div class="text-panel">
-        <textarea id="resultTextarea" placeholder="「開始」ボタンを押して話してください..." readonly></textarea>
+        <textarea id="resultTextarea" placeholder="「開始」ボタンを押して話してください。途中で止めてもテキストは消えずに追記されます..." readonly></textarea>
     </div>
 
     <div class="controls-panel">
@@ -303,9 +303,7 @@
     async function initDevices() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
         try {
-            // スマホでのマイク権限を確実に取得
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            // 取得したストリームはデバイス列挙が終わるまで解放しない（iOS対策）
             const devices = await navigator.mediaDevices.enumerateDevices();
             
             deviceSelect.innerHTML = '<option value="">標準のマイク (デフォルト)</option>';
@@ -318,7 +316,6 @@
                 }
             });
             
-            // トラックを閉じてマイク使用中アイコンを一旦消す
             stream.getTracks().forEach(track => track.stop());
         } catch (e) {
             console.error("デバイス取得失敗:", e);
@@ -339,7 +336,7 @@
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
-        recognition.continuous = false; // スマホでのバックグラウンドハングを防ぐためfalseを維持
+        recognition.continuous = false; 
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
@@ -378,7 +375,6 @@
 
         recognition.onerror = (event) => {
             console.warn("認識エラー:", event.error);
-            // スマホでの「ネットワーク切断」や「無音によるアボート」を自己修復するロジック
             if (isRunning && (event.error === 'network' || event.error === 'no-speech' || event.error === 'aborted')) {
                 updateStatus('connected', '再接続を試みています...');
             }
@@ -398,7 +394,6 @@
 
             if (isRunning) {
                 renderText("");
-                // スマホのOSに拒否されないよう、最低でも400ms以上のディレイを確保
                 const delay = Math.max(400, parseInt(sensitivitySelect.value, 10));
                 restartTimer = setTimeout(() => {
                     if (isRunning) {
@@ -421,7 +416,6 @@
             recognition.start();
         } catch(e) {
             console.error("開始失敗:", e);
-            // 起動に失敗した場合は1秒後に再試行（スマホの割り込み対策）
             if (isRunning) {
                 restartTimer = setTimeout(() => startRecognition(), 1000);
             }
@@ -463,9 +457,8 @@
         btnStart.disabled = true;
         btnStop.disabled = false;
         
-        finalizedLines = [];
+        // 【修正完了】過去のデータをクリアする処理を削除し、追記できるようにしました
         currentInterim = "";
-        resultTextarea.value = "";
 
         startRecognition();
         await requestWakeLock();
@@ -524,7 +517,6 @@
 
     document.addEventListener('visibilitychange', async () => {
         if (isRunning && document.visibilityState === 'visible') {
-            // バックグラウンドから復帰した際に認識が死んでいたら叩き起こす
             if (recognition) {
                 try { recognition.start(); } catch(e) {}
             }
