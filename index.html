@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (完全修正版)</title>
+    <title>超安定文字起こしツール (スマホ完全最適化版)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -111,7 +111,7 @@
             background: #fff;
             outline: none;
             height: 32px;
-            min-width: 0; /* 幅縮小時の崩れ防止 */
+            min-width: 0;
         }
 
         .text-panel {
@@ -149,7 +149,7 @@
 
         .btn-grid-sub {
             display: grid;
-            grid-template-columns: repeat(3, 1fr); /* リセットをここに統合して3列に変更 */
+            grid-template-columns: repeat(3, 1fr);
             gap: 6px;
         }
 
@@ -248,20 +248,14 @@
             <div class="select-row">
                 <span class="select-label">応答感度:</span>
                 <select id="sensitivitySelect">
-                    <option value="10">最高 (文頭を最優先・即時確定)</option>
-                    <option value="150" selected>標準 (おすすめ・適度な間隔)</option>
-                    <option value="600">低め (長めの沈黙を許容)</option>
-                    <option value="1200">最低 (一つの文章に極力まとめる)</option>
+                    <option value="400">最高 (即時再起動を試行)</option>
+                    <option value="600" selected>標準 (スマホ推奨・高安定)</option>
+                    <option value="1000">低め (長めの沈黙を許容)</option>
+                    <option value="1500">最低 (一つの文章に極力まとめる)</option>
                 </select>
             </div>
-            <div class="select-row">
-                <span class="select-label">音量ブースト:</span>
-                <select id="boostSelect">
-                    <option value="1.0" selected>等倍 (加工なし)</option>
-                    <option value="1.5">1.5倍 (小声向け)</option>
-                    <option value="2.0">2.0倍 (遠くのマイク向け)</option>
-                    <option value="3.0">3.0倍 (最大増幅・環境音注意)</option>
-                </select>
+            <div class="select-row" style="display: none;">
+                <select id="boostSelect"><option value="1.0" selected></option></select>
             </div>
         </div>
     </div>
@@ -291,12 +285,6 @@
     let wakeLock = null;
     let restartTimer = null;
 
-    let audioContext = null;
-    let audioStream = null;
-    let gainNode = null;
-    let mediaStreamSource = null;
-    let mediaStreamDestination = null;
-
     const btnStart = document.getElementById('btnStart');
     const btnStop = document.getElementById('btnStop');
     const btnCopy = document.getElementById('btnCopy');
@@ -305,7 +293,6 @@
     const btnReset = document.getElementById('btnReset');
     const deviceSelect = document.getElementById('deviceSelect');
     const sensitivitySelect = document.getElementById('sensitivitySelect');
-    const boostSelect = document.getElementById('boostSelect');
     const resultTextarea = document.getElementById('resultTextarea');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -316,8 +303,11 @@
     async function initDevices() {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
         try {
-            await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => {});
+            // スマホでのマイク権限を確実に取得
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // 取得したストリームはデバイス列挙が終わるまで解放しない（iOS対策）
             const devices = await navigator.mediaDevices.enumerateDevices();
+            
             deviceSelect.innerHTML = '<option value="">標準のマイク (デフォルト)</option>';
             devices.forEach(device => {
                 if (device.kind === 'audioinput') {
@@ -327,52 +317,17 @@
                     deviceSelect.appendChild(option);
                 }
             });
+            
+            // トラックを閉じてマイク使用中アイコンを一旦消す
+            stream.getTracks().forEach(track => track.stop());
         } catch (e) {
             console.error("デバイス取得失敗:", e);
         }
     }
 
-    async function setupAudioBoost() {
-        closeAudioContext();
-        const deviceId = deviceSelect.value;
-        const constraints = {
-            audio: deviceId ? { deviceId: { exact: deviceId } } : true
-        };
-
-        try {
-            audioStream = await navigator.mediaDevices.getUserMedia(constraints);
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            mediaStreamSource = audioContext.createMediaStreamSource(audioStream);
-            gainNode = audioContext.createGain();
-            gainNode.gain.value = parseFloat(boostSelect.value);
-            mediaStreamDestination = audioContext.createMediaStreamDestination();
-            
-            mediaStreamSource.connect(gainNode);
-            gainNode.connect(mediaStreamDestination);
-            
-            return mediaStreamDestination.stream;
-        } catch (err) {
-            console.error("オーディオブーストの設定に失敗しました:", err);
-            return audioStream;
-        }
-    }
-
-    function closeAudioContext() {
-        if (gainNode) { try { gainNode.disconnect(); } catch(e){} gainNode = null; }
-        if (mediaStreamSource) { try { mediaStreamSource.disconnect(); } catch(e){} mediaStreamSource = null; }
-        if (audioStream) {
-            audioStream.getTracks().forEach(track => track.stop());
-            audioStream = null;
-        }
-        if (audioContext && audioContext.state !== 'closed') {
-            audioContext.close();
-            audioContext = null;
-        }
-    }
-
-    async function startRecognition() {
+    function startRecognition() {
         if (!SpeechRecognition) {
-            alert("お使いのブラウザは音声認識に対応していません。iOS/AndroidのChromeかSafariでお試しください。");
+            alert("お使いのブラウザは音声認識に対応していません。SafariかChromeの最新版でお試しください。");
             return;
         }
 
@@ -380,16 +335,11 @@
             try { recognition.abort(); } catch(e){}
         }
 
-        if (restartTimer) {
-            clearTimeout(restartTimer);
-        }
-
-        await setupAudioBoost();
+        if (restartTimer) clearTimeout(restartTimer);
 
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
-        
-        recognition.continuous = false; 
+        recognition.continuous = false; // スマホでのバックグラウンドハングを防ぐためfalseを維持
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
@@ -428,6 +378,10 @@
 
         recognition.onerror = (event) => {
             console.warn("認識エラー:", event.error);
+            // スマホでの「ネットワーク切断」や「無音によるアボート」を自己修復するロジック
+            if (isRunning && (event.error === 'network' || event.error === 'no-speech' || event.error === 'aborted')) {
+                updateStatus('connected', '再接続を試みています...');
+            }
         };
 
         recognition.onend = () => {
@@ -444,14 +398,19 @@
 
             if (isRunning) {
                 renderText("");
-                const delay = parseInt(sensitivitySelect.value, 10);
+                // スマホのOSに拒否されないよう、最低でも400ms以上のディレイを確保
+                const delay = Math.max(400, parseInt(sensitivitySelect.value, 10));
                 restartTimer = setTimeout(() => {
                     if (isRunning) {
-                        try { recognition.start(); } catch(e) { startRecognition(); }
+                        try { 
+                            recognition.start(); 
+                        } catch(e) { 
+                            console.log("再起動リトライ");
+                            startRecognition(); 
+                        }
                     }
                 }, delay); 
             } else {
-                closeAudioContext();
                 updateStatus('connected', '待機中');
                 btnStart.disabled = false;
                 btnStop.disabled = true;
@@ -462,6 +421,10 @@
             recognition.start();
         } catch(e) {
             console.error("開始失敗:", e);
+            // 起動に失敗した場合は1秒後に再試行（スマホの割り込み対策）
+            if (isRunning) {
+                restartTimer = setTimeout(() => startRecognition(), 1000);
+            }
         }
     }
 
@@ -514,8 +477,8 @@
         if (recognition) {
             try { recognition.stop(); } catch(e){}
         }
-        closeAudioContext();
         releaseWakeLock();
+        updateStatus('connected', '待機中');
     });
 
     btnCopy.addEventListener('click', () => {
@@ -532,7 +495,6 @@
         const blob = new Blob([text], { type: 'text/plain' });
         const a = document.createElement('a');
         const now = new Date();
-        // 構文エラーを修正しました
         const filename = `起こし文_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.txt`;
         
         a.href = URL.createObjectURL(blob);
@@ -553,12 +515,6 @@
         initDevices();
     });
 
-    boostSelect.addEventListener('change', () => {
-        if (gainNode && audioContext) {
-            gainNode.gain.value = parseFloat(boostSelect.value);
-        }
-    });
-
     window.addEventListener('resize', autoScroll);
 
     window.addEventListener('DOMContentLoaded', () => {
@@ -567,7 +523,11 @@
     });
 
     document.addEventListener('visibilitychange', async () => {
-        if (wakeLock !== null && document.visibilityState === 'visible') {
+        if (isRunning && document.visibilityState === 'visible') {
+            // バックグラウンドから復帰した際に認識が死んでいたら叩き起こす
+            if (recognition) {
+                try { recognition.start(); } catch(e) {}
+            }
             await requestWakeLock();
         }
     });
