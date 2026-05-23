@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>超安定文字起こしツール (モバイル・タブレット完全対応)</title>
+    <title>超安定文字起こしツール (感度調整機能付き)</title>
     <style>
         :root {
             --bg-color: #f1f3f5;
@@ -24,7 +24,6 @@
         }
 
         body, html {
-            /* svh, dvh対応ブラウザなら優先、なければ100%にフォールバック */
             height: 100%;
             height: 100dvh;
             background-color: var(--bg-color);
@@ -32,25 +31,23 @@
             overflow: hidden;
         }
 
-        /* 画面全体を包むコンテナ */
         .container {
             display: flex;
             flex-direction: column;
             height: 100%;
-            max-width: 900px; /* タブレットやPCで横に広がりすぎないように制限 */
+            max-width: 900px;
             margin: 0 auto;
             padding: 12px;
-            padding-bottom: calc(12px + env(safe-area-inset-bottom)); /* iPhoneのホームバー対策 */
+            padding-bottom: calc(12px + env(safe-area-inset-bottom));
             gap: 10px;
         }
 
-        /* ヘッダー・デバイス設定 */
         .header-panel {
             background: var(--card-bg);
             padding: 12px 16px;
             border-radius: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.03);
-            flex-shrink: 0; /* 縮まないように固定 */
+            flex-shrink: 0;
         }
 
         .status-bar {
@@ -87,7 +84,21 @@
 
         .device-controls {
             display: flex;
+            flex-direction: column;
             gap: 8px;
+        }
+
+        .select-row {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .select-label {
+            font-size: 0.85rem;
+            font-weight: bold;
+            min-width: 65px;
+            color: var(--secondary);
         }
 
         select {
@@ -100,10 +111,9 @@
             outline: none;
         }
 
-        /* テキストエリア（画面サイズに合わせて伸縮する主役エリア） */
         .text-panel {
             flex: 1;
-            min-height: 0; /* Flexboxの縮小バグを防ぐ重要プロパティ */
+            min-height: 0;
             position: relative;
         }
 
@@ -127,12 +137,11 @@
             box-shadow: 0 0 0 3px rgba(0,123,255,0.15);
         }
 
-        /* コントロール操作系（下部に固定） */
         .controls-panel {
             display: flex;
             flex-direction: column;
             gap: 8px;
-            flex-shrink: 0; /* 縮まないように固定 */
+            flex-shrink: 0;
         }
 
         .btn-grid {
@@ -180,7 +189,6 @@
         .btn-clear { background-color: var(--secondary); }
         .btn-reset { background-color: #6f42c1; font-size: 0.85rem; padding: 10px 12px; }
 
-        /* タブレット・PCなど画面が広い端末向けの最適化 */
         @media (min-width: 600px) {
             .container {
                 padding: 20px;
@@ -189,12 +197,18 @@
             .header-panel {
                 padding: 16px 20px;
             }
+            .device-controls {
+                flex-direction: row;
+                align-items: center;
+            }
+            .select-row {
+                flex: 1;
+            }
             textarea {
                 font-size: 1.2rem;
                 padding: 24px;
             }
             .controls-panel {
-                /* 横長画面ではボタンを1行にまとめる */
                 flex-direction: row;
             }
             .btn-grid {
@@ -213,7 +227,6 @@
 <body>
 
 <div class="container">
-    <!-- 上部: ステータス＆マイク選択 -->
     <div class="header-panel">
         <div class="status-bar">
             <span>音声認識サーバ接続状態:</span>
@@ -223,19 +236,29 @@
             </span>
         </div>
         <div class="device-controls">
-            <select id="deviceSelect">
-                <option value="">標準のマイク (デフォルト)</option>
-            </select>
-            <button id="btnReset" class="btn-reset">デバイスリセット</button>
+            <div class="select-row">
+                <span class="select-label">マイク入力:</span>
+                <select id="deviceSelect">
+                    <option value="">標準のマイク (デフォルト)</option>
+                </select>
+                <button id="btnReset" class="btn-reset">リセット</button>
+            </div>
+            <div class="select-row">
+                <span class="select-label">応答感度:</span>
+                <select id="sensitivitySelect">
+                    <option value="10">最高 (文頭を最優先・即時確定)</option>
+                    <option value="150" selected>標準 (おすすめ・適度な間隔)</option>
+                    <option value="600">低め (長めの沈黙を許容)</option>
+                    <option value="1200">最低 (一つの文章に極力まとめる)</option>
+                </select>
+            </div>
         </div>
     </div>
 
-    <!-- 中部: 伸縮するテキスト表示エリア -->
     <div class="text-panel">
         <textarea id="resultTextarea" placeholder="「開始」ボタンを押して話してください..." readonly></textarea>
     </div>
 
-    <!-- 下部: 画面外に絶対にはみ出さないボタン群 -->
     <div class="controls-panel">
         <div class="btn-grid">
             <button id="btnStart" class="btn-start">開始</button>
@@ -254,6 +277,7 @@
     let recognition = null;
     let isRunning = false; 
     let wakeLock = null;
+    let restartTimer = null; // 再起動制御用タイマー
 
     const btnStart = document.getElementById('btnStart');
     const btnStop = document.getElementById('btnStop');
@@ -262,6 +286,7 @@
     const btnClear = document.getElementById('btnClear');
     const btnReset = document.getElementById('btnReset');
     const deviceSelect = document.getElementById('deviceSelect');
+    const sensitivitySelect = document.getElementById('sensitivitySelect'); // 感度セレクト
     const resultTextarea = document.getElementById('resultTextarea');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -298,14 +323,20 @@
             try { recognition.abort(); } catch(e){}
         }
 
+        if (restartTimer) {
+            clearTimeout(restartTimer);
+        }
+
         recognition = new SpeechRecognition();
         recognition.lang = 'ja-JP';
+        
+        // 連続認識をオフにし、確定後の再起動ウェイト（感度値）をコントロールすることで文頭を守ります
         recognition.continuous = false; 
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
         recognition.onstart = () => {
-            updateStatus('listening', '接続中 (認識中)');
+            updateStatus('listening', '🔴 お話しください（認識中）');
         };
 
         recognition.onresult = (event) => {
@@ -318,8 +349,17 @@
 
                 if (result.isFinal) {
                     text = text.replace(/[、。]+$/, "");
-                    if (text && (finalizedLines.length === 0 || finalizedLines[finalizedLines.length - 1] !== text + "。")) {
-                        finalizedLines.push(text + "。");
+                    if (text) {
+                        const targetLine = text + "。";
+                        
+                        // スマホ重複ガード（直前と全く同じ文は弾く）
+                        const isDuplicate = finalizedLines.length > 0 && 
+                            (finalizedLines[finalizedLines.length - 1] === targetLine || 
+                             finalizedLines.slice(-2).includes(targetLine));
+
+                        if (!isDuplicate) {
+                            finalizedLines.push(targetLine);
+                        }
                     }
                     currentInterim = ""; 
                 } else {
@@ -335,21 +375,30 @@
         };
 
         recognition.onend = () => {
+            // 終了時に未確定テキストがあれば救出
             if (currentInterim) {
                 let text = currentInterim.replace(/[、。]+$/, "").trim();
-                if (text && (finalizedLines.length === 0 || finalizedLines[finalizedLines.length - 1] !== text + "。")) {
-                    finalizedLines.push(text + "。");
+                if (text) {
+                    const targetLine = text + "。";
+                    if (!finalizedLines.slice(-2).includes(targetLine)) {
+                        finalizedLines.push(targetLine);
+                    }
                 }
                 currentInterim = "";
             }
 
             if (isRunning) {
                 renderText("");
-                setTimeout(() => {
+                
+                // リストボックスから選択されたウェイト値（ミリ秒）を取得
+                const delay = parseInt(sensitivitySelect.value, 10);
+                
+                // 設定された感度の時間だけ待ってから、超高速で次の聞き取りを再開
+                restartTimer = setTimeout(() => {
                     if (isRunning) {
                         try { recognition.start(); } catch(e) { startRecognition(); }
                     }
-                }, 50); 
+                }, delay); 
             } else {
                 updateStatus('connected', '待機中');
                 btnStart.disabled = false;
@@ -360,7 +409,7 @@
         try {
             recognition.start();
         } catch(e) {
-            console.error("開始失敗リトライ:", e);
+            console.error("開始失敗:", e);
         }
     }
 
@@ -398,12 +447,18 @@
         isRunning = true;
         btnStart.disabled = true;
         btnStop.disabled = false;
+        
+        finalizedLines = [];
+        currentInterim = "";
+        resultTextarea.value = "";
+
         startRecognition();
         await requestWakeLock();
     });
 
     btnStop.addEventListener('click', () => {
         isRunning = false;
+        if (restartTimer) clearTimeout(restartTimer);
         if (recognition) {
             try { recognition.stop(); } catch(e){}
         }
@@ -444,7 +499,6 @@
         initDevices();
     });
 
-    // ビューポートサイズ変更・ソフトウェアキーボード対策
     window.addEventListener('resize', autoScroll);
 
     window.addEventListener('DOMContentLoaded', () => {
